@@ -94,7 +94,7 @@ class CaptureSession:
         self.minicroft.bus.emit(test_message)
         self.done.wait(timeout)
 
-    def finish(self) -> List[str]:
+    def finish(self) -> List[Message]:
         self.done.set()
         self.minicroft.stop()
         return self.responses
