@@ -1,12 +1,12 @@
 # Changelog
 
-## [0.2.0a1](https://github.com/TigreGotico/ovoscope/tree/0.2.0a1) (2025-06-09)
+## [0.3.0a1](https://github.com/TigreGotico/ovoscope/tree/0.3.0a1) (2025-06-09)
 
-[Full Changelog](https://github.com/TigreGotico/ovoscope/compare/0.1.1...0.2.0a1)
+[Full Changelog](https://github.com/TigreGotico/ovoscope/compare/0.2.0...0.3.0a1)
 
 **Merged pull requests:**
 
-- feat: multi\_message\_tests [\#5](https://github.com/TigreGotico/ovoscope/pull/5) ([JarbasAl](https://github.com/JarbasAl))
+- feat: message ignore\_list [\#7](https://github.com/TigreGotico/ovoscope/pull/7) ([JarbasAl](https://github.com/JarbasAl))
 
 
 
