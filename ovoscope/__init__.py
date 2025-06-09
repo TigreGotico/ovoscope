@@ -50,9 +50,6 @@ class MiniCroft(SkillManager):
     def stop(self):
         super().stop()
         self.scheduler.shutdown()
-        SessionManager.bus = None
-        SessionManager.sessions = {}
-        SessionManager.default_session = SessionManager.sessions["default"] = Session("default")
 
 
 def get_minicroft(skill_ids: Union[List[str], str]):
@@ -236,7 +233,7 @@ class End2EndTest:
 
 
 if __name__ == "__main__":
-    LOG.set_level("CRITICAL")
+    #LOG.set_level("CRITICAL")
 
     session = Session("123")
     session.lang = "en-US"  # change lang, pipeline, whatever as needed
@@ -262,7 +259,7 @@ if __name__ == "__main__":
     # export / import
     test.deserialize(test.serialize())  # smoke test
 
-    autotest = End2EndTest.from_message(message, skill_ids=[])
+    autotest = End2EndTest.from_message(message, skill_ids=["ovos-skill-hello-world.openvoiceos"])
     print(autotest)
     autotest.save("test.json")
 
