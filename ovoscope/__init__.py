@@ -148,7 +148,7 @@ class End2EndTest:
                     if self.test_session_lang:
                         assert sess_e.lang == sess_r.lang
                     if self.test_session_pipeline:
-                        assert sess_e.pipeline == sess_e.pipeline
+                        assert sess_e.pipeline == sess_r.pipeline
             except Exception as e:
                 print(f"Expected message: {expected.serialize()}")
                 print(f"Received message: {received.serialize()}")
