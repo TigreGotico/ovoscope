@@ -56,6 +56,7 @@ class MiniCroft(SkillManager):
     def stop(self):
         super().stop()
         self.scheduler.shutdown()
+        self.bus.close()
 
 
 def get_minicroft(skill_ids: Union[List[str], str]):
@@ -123,6 +124,7 @@ class End2EndTest:
     flip_points: List[str] = dataclasses.field(default_factory=lambda: DEFAULT_FLIP_POINTS)
 
     minicroft: Optional[MiniCroft] = None
+    managed: bool = False
 
     # test assertions to run
     test_session_lang: bool = True
@@ -136,10 +138,11 @@ class End2EndTest:
         # standardize to be a list
         if isinstance(self.source_message, Message):
             self.source_message = [self.source_message]
-        if self.minicroft is None:
-            self.minicroft = get_minicroft(self.skill_ids)
 
     def execute(self, timeout=30):
+        if self.minicroft is None:
+            self.minicroft = get_minicroft(self.skill_ids)
+            self.managed = True
         # track initial source/destination for use in routing tests
         e_src = self.source_message[0].context.get("source")
         e_dst = self.source_message[0].context.get("destination")
@@ -185,6 +188,11 @@ class End2EndTest:
                 print(f"Expected message: {expected.serialize()}")
                 print(f"Received message: {received.serialize()}")
                 raise
+
+        if self.managed:
+            self.minicroft.stop()
+            del self.minicroft
+            self.minicroft = None
 
     @staticmethod
     def anonymize_message(message: Message) -> Message:
@@ -248,11 +256,12 @@ class End2EndTest:
         flip_points = flip_points or DEFAULT_FLIP_POINTS
         ignore_messages = ignore_messages or DEFAULT_IGNORED
 
-        capture = CaptureSession(get_minicroft(skill_ids),
+        minicroft = get_minicroft(skill_ids)
+        capture = CaptureSession(minicroft,
                                  eof_msgs=eof_msgs,
                                  ignore_messages=ignore_messages)
         capture.capture(message, timeout)
-
+        minicroft.stop()
         return End2EndTest(
             skill_ids=skill_ids,
             source_message=message,
