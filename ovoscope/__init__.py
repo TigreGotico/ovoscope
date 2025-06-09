@@ -285,8 +285,6 @@ class End2EndTest:
         capture.capture(message, timeout)
         minicroft.stop()
         expected_messages = capture.finish()
-        for m in expected_messages:
-            print(m.msg_type, m.data)
         return End2EndTest(
             skill_ids=skill_ids,
             source_message=message,
