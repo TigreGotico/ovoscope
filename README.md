@@ -35,7 +35,8 @@ from ovoscope import End2EndTest
 from ovos_bus_client.message import Message
 from ovos_bus_client.session import Session
 
-session = Session("test123")
+
+session = Session("123")  # change lang, pipeline, etc. as needed
 message = Message("recognizer_loop:utterance",
                   {"utterances": ["hello world"]},
                   {"session": session.serialize(), "source": "A", "destination": "B"})
@@ -44,9 +45,10 @@ test = End2EndTest(
     skill_ids=[],
     source_message=message,
     expected_messages=[
-        Message("recognizer_loop:utterance", {"utterances": ["hello world"]}, {"session": session.serialize()}),
-        Message("complete_intent_failure", {}, {"session": session.serialize()}),
-        Message("ovos.utterance.handled", {}, {"session": session.serialize()}),
+        message,
+        Message("mycroft.audio.play_sound", {"uri": "snd/error.mp3"}),
+        Message("complete_intent_failure", {}),
+        Message("ovos.utterance.handled", {}),
     ]
 )
 
@@ -72,5 +74,3 @@ test.execute()
 ## Contributing
 
 PRs are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-
