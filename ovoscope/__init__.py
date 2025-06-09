@@ -63,6 +63,43 @@ def get_minicroft(skill_ids: Union[List[str], str]):
     return croft1
 
 
+
+@dataclasses.dataclass()
+class CaptureSession:
+    minicroft: MiniCroft
+    responses: List[str] = dataclasses.field(default_factory=list)
+    done: threading.Event = dataclasses.field(default_factory=lambda: threading.Event())
+
+    def __post_init__(self):
+
+        def handle_message(msg: str):
+            if self.done.is_set():
+                return
+            msg = Message.deserialize(msg)
+            self.responses.append(msg)
+
+        self.minicroft.bus.on("message", handle_message)
+
+    def capture(self, source_message: Message, eof_msgs: List[str], timeout=20):
+
+        test_message = deepcopy(source_message)  # ensure object not mutated by ovos-core
+
+        def handle_end_of_test(msg: Message):
+            self.done.set()
+
+        for m in eof_msgs:
+            self.minicroft.bus.on(m, handle_end_of_test)
+
+        self.done.clear()
+        self.minicroft.bus.emit(test_message)
+        self.done.wait(timeout)
+
+    def finish(self) -> List[str]:
+        self.done.set()
+        self.minicroft.stop()
+        return self.responses
+
+
 @dataclasses.dataclass()
 class End2EndTest:
     skill_ids: List[str]  # skill_ids to load during the test
@@ -83,47 +120,13 @@ class End2EndTest:
     test_msg_context: bool = True
     test_routing: bool = True
 
-    @staticmethod
-    def capture_messages(skill_ids: List[str],
-                         source_message: Message,
-                         eof_msgs: List[str],
-                         timeout=20) -> List[Message]:
-
-        test_message = deepcopy(source_message)  # ensure object not mutated by ovos-core
-
-        responses = []
-        done = threading.Event()
-
-        def handle_message(msg: str):
-            nonlocal responses
-            if done.is_set():
-                return
-            msg = Message.deserialize(msg)
-            responses.append(msg)
-
-        def handle_end_of_test(msg: Message):
-            done.set()
-
-        minicroft = get_minicroft(skill_ids)
-
-        minicroft.bus.on("message", handle_message)
-        for m in eof_msgs:
-            minicroft.bus.on(m, handle_end_of_test)
-
-        minicroft.bus.emit(test_message)
-        done.wait(timeout)
-
-        minicroft.stop()
-
-        return responses
 
     def execute(self, timeout=30):
         e_src = self.source_message.context.get("source")
         e_dst = self.source_message.context.get("destination")
-        messages = self.capture_messages(skill_ids=self.skill_ids,
-                                         source_message=self.source_message,
-                                         eof_msgs=self.eof_msgs,
-                                         timeout=timeout)
+        capture = CaptureSession(get_minicroft(self.skill_ids))
+        capture.capture(self.source_message, self.eof_msgs, timeout)
+        messages = capture.finish()
         for expected, received in zip(self.expected_messages, messages):
             try:
                 sess_e = SessionManager.get(expected) if "session" in expected.context else None
@@ -212,13 +215,14 @@ class End2EndTest:
                      timeout=20) -> 'End2EndTest':
         eof_msgs = eof_msgs or ["ovos.utterance.handled"]
         flip_points = flip_points or ["recognizer_loop:utterance"]
+
+        capture = CaptureSession(get_minicroft(skill_ids))
+        capture.capture(message, eof_msgs, timeout)
+
         return End2EndTest(
             skill_ids=skill_ids,
             source_message=message,
-            expected_messages=cls.capture_messages(skill_ids=skill_ids,
-                                                   source_message=message,
-                                                   eof_msgs=eof_msgs,
-                                                   timeout=timeout),
+            expected_messages=capture.finish(),
             flip_points=flip_points
         )
 
