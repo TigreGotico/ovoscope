@@ -1,12 +1,12 @@
 # Changelog
 
-## [0.3.2a1](https://github.com/TigreGotico/ovoscope/tree/0.3.2a1) (2025-06-09)
+## [0.4.0a1](https://github.com/TigreGotico/ovoscope/tree/0.4.0a1) (2025-06-09)
 
-[Full Changelog](https://github.com/TigreGotico/ovoscope/compare/0.3.1...0.3.2a1)
+[Full Changelog](https://github.com/TigreGotico/ovoscope/compare/0.3.2...0.4.0a1)
 
 **Merged pull requests:**
 
-- fix:shutdown [\#11](https://github.com/TigreGotico/ovoscope/pull/11) ([JarbasAl](https://github.com/JarbasAl))
+- feat: boot sequence tests + improve routing tests [\#13](https://github.com/TigreGotico/ovoscope/pull/13) ([JarbasAl](https://github.com/JarbasAl))
 
 
 
