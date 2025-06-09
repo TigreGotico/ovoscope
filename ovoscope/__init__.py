@@ -14,7 +14,6 @@ from ovos_utils.log import LOG
 from ovos_utils.process_utils import ProcessState
 
 
-
 class MiniCroft(SkillManager):
     def __init__(self, skill_ids, *args, **kwargs):
         bus = FakeBus()
@@ -65,8 +64,8 @@ def get_minicroft(skill_ids: Union[List[str], str]):
 @dataclasses.dataclass()
 class End2EndTest:
     skill_ids: List[str]  # skill_ids to load during the test
-    source_message: Message # starts the test
-    expected_messages: List[Message] # tests are performed against message list
+    source_message: Message  # starts the test
+    expected_messages: List[Message]  # tests are performed against message list
 
     # if received, end message capture
     eof_msgs: List[str] = dataclasses.field(default_factory=lambda: ["ovos.utterance.handled"])
@@ -140,31 +139,23 @@ class End2EndTest:
             if self.test_session_pipeline:
                 assert sess_e.pipeline == sess_e.pipeline
 
+
 if __name__ == "__main__":
     LOG.set_level("CRITICAL")
 
-    session = Session("123") # change lang, pipeline, whatever as needed
+    session = Session("123")  # change lang, pipeline, whatever as needed
     message = Message("recognizer_loop:utterance",
                       {"utterances": ["hello world"]},
-                      {"session": session.serialize(),
-                       "source": "A", "destination": "B"})
+                      {"session": session.serialize(), "source": "A", "destination": "B"})
 
     test = End2EndTest(
-        skill_ids=["skill-ovos-hello-world.openvoiceos"],
+        skill_ids=[],
         source_message=message,
         expected_messages=[
-            Message("recognizer_loop:utterance",
-                    {"utterances": ["hello world"]},
-                    {"session": session.serialize()}),
-            Message("mycroft.audio.play_sound",
-                    {"uri":"snd/error.mp3"},
-                    {"session": session.serialize()}),
-            Message("complete_intent_failure",
-                    {},
-                    {"session": session.serialize()}),
-            Message("ovos.utterance.handled",
-                    {},
-                    {"session": session.serialize()}),
+            message,
+            Message("mycroft.audio.play_sound", {"uri": "snd/error.mp3"}),
+            Message("complete_intent_failure", {}),
+            Message("ovos.utterance.handled", {}),
         ]
     )
 
