@@ -103,7 +103,7 @@ class CaptureSession:
 @dataclasses.dataclass()
 class End2EndTest:
     skill_ids: List[str]  # skill_ids to load during the test
-    source_message: Message  # starts the test
+    source_message: Union[Message, List[Message]]  # to be emitted, sequentially if a list
     expected_messages: List[Message]  # tests are performed against message list
 
     # if received, end message capture
@@ -121,14 +121,29 @@ class End2EndTest:
     test_routing: bool = True
 
 
+    def __post_init__(self):
+        # standardize to be a list
+        if isinstance(self.source_message, Message):
+            self.source_message = [self.source_message]
+
     def execute(self, timeout=30):
-        e_src = self.source_message.context.get("source")
-        e_dst = self.source_message.context.get("destination")
+        # track initial source/destination for use in routing tests
+        e_src = self.source_message[0].context.get("source")
+        e_dst = self.source_message[0].context.get("destination")
+
+        # the capture session will store all messages until capture.finish()
+        #  even if multiple messages are emitted
         capture = CaptureSession(get_minicroft(self.skill_ids))
-        capture.capture(self.source_message, self.eof_msgs, timeout)
+        for source_message in self.source_message:
+            capture.capture(source_message, self.eof_msgs, timeout)
+
+        # final message list
         messages = capture.finish()
         for expected, received in zip(self.expected_messages, messages):
             try:
+                if expected.msg_type in self.flip_points:
+                    e_src = expected.context.get("source")
+                    e_dst = expected.context.get("destination")
                 sess_e = SessionManager.get(expected) if "session" in expected.context else None
                 sess_r = SessionManager.get(received) if "session" in received.context else None
                 if self.test_msg_type:
@@ -180,12 +195,13 @@ class End2EndTest:
         return msg
 
     def serialize(self, anonymize=True) -> SerializedTest:
-        src = self.anonymize_message(self.source_message) if anonymize else self.source_message
+        src = [self.anonymize_message(m) if anonymize else m
+                    for m in self.source_message]
         expected = [self.anonymize_message(m) if anonymize else m
                     for m in self.expected_messages]
         data = {
             "skill_ids": self.skill_ids,
-            "source_message": json.loads(src.serialize()),
+            "source_message": [json.loads(m.serialize()) for m in src],
             "expected_messages": [json.loads(m.serialize()) for m in expected],
             "eof_msgs": self.eof_msgs,
             "flip_points": self.flip_points,
@@ -203,7 +219,7 @@ class End2EndTest:
         if isinstance(data, str):
             data = json.loads(data)
         kwargs = data
-        kwargs["source_message"] = Message.deserialize(data["source_message"])
+        kwargs["source_message"] = [Message.deserialize(m) for m in data["source_message"]]
         kwargs["expected_messages"] = [Message.deserialize(m) for m in data["expected_messages"]]
         return End2EndTest(**kwargs)
 
@@ -258,6 +274,23 @@ if __name__ == "__main__":
     )
 
 
+    test.execute()
+
+    # multi message test
+    test = End2EndTest(
+        skill_ids=[],
+        source_message=[message, message],
+        expected_messages=[
+            message,
+            Message("mycroft.audio.play_sound", {"uri": "snd/error.mp3"}),
+            Message("complete_intent_failure", {}),
+            Message("ovos.utterance.handled", {}),
+            message,
+            Message("mycroft.audio.play_sound", {"uri": "snd/error.mp3"}),
+            Message("complete_intent_failure", {}),
+            Message("ovos.utterance.handled", {}),
+        ]
+    )
     test.execute()
 
     # export / import
