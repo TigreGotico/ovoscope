@@ -18,6 +18,10 @@ from ovos_utils.process_utils import ProcessState
 SerializedMessage = Dict[str, Union[str, Dict[str, Any]]]
 SerializedTest = Dict[str, Union[str, bool, List[str], SerializedMessage]]
 
+DEFAULT_IGNORED = ["ovos.skills.settings_changed"]
+DEFAULT_EOF = ["ovos.utterance.handled"]
+DEFAULT_FLIP_POINTS = ["recognizer_loop:utterance"]
+
 
 class MiniCroft(SkillManager):
     def __init__(self, skill_ids, *args, **kwargs):
@@ -67,7 +71,8 @@ def get_minicroft(skill_ids: Union[List[str], str]):
 @dataclasses.dataclass()
 class CaptureSession:
     minicroft: MiniCroft
-    responses: List[str] = dataclasses.field(default_factory=list)
+    responses: List[Message] = dataclasses.field(default_factory=list)
+    ignore_messages: List[str] = dataclasses.field(default_factory=lambda: DEFAULT_IGNORED)
     done: threading.Event = dataclasses.field(default_factory=lambda: threading.Event())
 
     def __post_init__(self):
@@ -76,7 +81,8 @@ class CaptureSession:
             if self.done.is_set():
                 return
             msg = Message.deserialize(msg)
-            self.responses.append(msg)
+            if msg.msg_type not in self.ignore_messages:
+                self.responses.append(msg)
 
         self.minicroft.bus.on("message", handle_message)
 
@@ -105,12 +111,13 @@ class End2EndTest:
     skill_ids: List[str]  # skill_ids to load during the test
     source_message: Union[Message, List[Message]]  # to be emitted, sequentially if a list
     expected_messages: List[Message]  # tests are performed against message list
+    ignore_messages: List[str] = dataclasses.field(default_factory=lambda: DEFAULT_IGNORED)
 
     # if received, end message capture
-    eof_msgs: List[str] = dataclasses.field(default_factory=lambda: ["ovos.utterance.handled"])
+    eof_msgs: List[str] = dataclasses.field(default_factory=lambda: DEFAULT_EOF)
 
     # messages after which source and destination flip in the message.context
-    flip_points: List[str] = dataclasses.field(default_factory=lambda: ["recognizer_loop:utterance"])
+    flip_points: List[str] = dataclasses.field(default_factory=lambda: DEFAULT_FLIP_POINTS)
 
     # test assertions to run
     test_session_lang: bool = True
@@ -133,7 +140,8 @@ class End2EndTest:
 
         # the capture session will store all messages until capture.finish()
         #  even if multiple messages are emitted
-        capture = CaptureSession(get_minicroft(self.skill_ids))
+        capture = CaptureSession(get_minicroft(self.skill_ids),
+                                 ignore_messages=self.ignore_messages)
         for source_message in self.source_message:
             capture.capture(source_message, self.eof_msgs, timeout)
 
@@ -228,11 +236,14 @@ class End2EndTest:
                      skill_ids: List[str],
                      eof_msgs: Optional[List[str]]=None,
                      flip_points:  Optional[List[str]]=None,
+                     ignore_messages:  Optional[List[str]]=None,
                      timeout=20) -> 'End2EndTest':
-        eof_msgs = eof_msgs or ["ovos.utterance.handled"]
-        flip_points = flip_points or ["recognizer_loop:utterance"]
+        eof_msgs = eof_msgs or DEFAULT_EOF
+        flip_points = flip_points or DEFAULT_FLIP_POINTS
+        ignore_messages = ignore_messages or DEFAULT_IGNORED
 
-        capture = CaptureSession(get_minicroft(skill_ids))
+        capture = CaptureSession(get_minicroft(skill_ids),
+                                 ignore_messages=ignore_messages)
         capture.capture(message, eof_msgs, timeout)
 
         return End2EndTest(
