@@ -26,10 +26,10 @@ DEFAULT_FLIP_POINTS = ["recognizer_loop:utterance"]
 class MiniCroft(SkillManager):
     def __init__(self, skill_ids, *args, **kwargs):
         bus = FakeBus()
-        super().__init__(bus, *args, **kwargs)
         self.skill_ids = skill_ids
-        self.intent_service = IntentService(self.bus)
+        self.intent_service = IntentService(bus)
         self.scheduler = EventScheduler(bus, schedule_file="/tmp/schetest.json")
+        super().__init__(bus, *args, **kwargs)
 
     def load_metadata_transformers(self, cfg):
         self.intent_service.metadata_plugins.config = cfg
@@ -44,12 +44,14 @@ class MiniCroft(SkillManager):
             if skill_id not in self.plugin_skills:
                 self._load_plugin_skill(skill_id, plug)
 
+        self.bus.emit(Message("mycroft.skills.train"))  # tell any pipeline plugins to train loaded intents
+
     def run(self):
         """Load skills and mark core as ready to start tests"""
         self.status.set_alive()
         self.load_plugin_skills()
-        self.status.set_ready()
         LOG.info("Skills all loaded!")
+        self.status.set_ready()
 
     def stop(self):
         super().stop()
@@ -67,43 +69,44 @@ def get_minicroft(skill_ids: Union[List[str], str]):
     return croft1
 
 
-
 @dataclasses.dataclass()
 class CaptureSession:
     minicroft: MiniCroft
     responses: List[Message] = dataclasses.field(default_factory=list)
+    eof_msgs: List[str] = dataclasses.field(default_factory=lambda: DEFAULT_EOF)
     ignore_messages: List[str] = dataclasses.field(default_factory=lambda: DEFAULT_IGNORED)
     done: threading.Event = dataclasses.field(default_factory=lambda: threading.Event())
 
+    def handle_message(self, msg: str):
+        if self.done.is_set():
+            return
+        msg = Message.deserialize(msg)
+        if msg.msg_type not in self.ignore_messages:
+            self.responses.append(msg)
+
+    def handle_end_of_test(self, msg: Message):
+        self.done.set()
+
     def __post_init__(self):
+        self.minicroft.bus.on("message", self.handle_message)
+        for m in self.eof_msgs:
+            self.minicroft.bus.on(m, self.handle_end_of_test)
 
-        def handle_message(msg: str):
-            if self.done.is_set():
-                return
-            msg = Message.deserialize(msg)
-            if msg.msg_type not in self.ignore_messages:
-                self.responses.append(msg)
-
-        self.minicroft.bus.on("message", handle_message)
-
-    def capture(self, source_message: Message, eof_msgs: List[str], timeout=20):
-
+    def capture(self, source_message: Message, timeout=20):
         test_message = deepcopy(source_message)  # ensure object not mutated by ovos-core
-
-        def handle_end_of_test(msg: Message):
-            self.done.set()
-
-        for m in eof_msgs:
-            self.minicroft.bus.on(m, handle_end_of_test)
-
         self.done.clear()
         self.minicroft.bus.emit(test_message)
         self.done.wait(timeout)
 
     def finish(self) -> List[Message]:
         self.done.set()
-        self.minicroft.stop()
+        self.minicroft.bus.remove("message", self.handle_message)
+        for m in self.eof_msgs:
+            self.minicroft.bus.remove(m, self.handle_end_of_test)
         return self.responses
+
+    def __del__(self):
+        self.finish()
 
 
 @dataclasses.dataclass()
@@ -119,6 +122,8 @@ class End2EndTest:
     # messages after which source and destination flip in the message.context
     flip_points: List[str] = dataclasses.field(default_factory=lambda: DEFAULT_FLIP_POINTS)
 
+    minicroft: Optional[MiniCroft] = None
+
     # test assertions to run
     test_session_lang: bool = True
     test_session_pipeline: bool = True
@@ -127,11 +132,12 @@ class End2EndTest:
     test_msg_context: bool = True
     test_routing: bool = True
 
-
     def __post_init__(self):
         # standardize to be a list
         if isinstance(self.source_message, Message):
             self.source_message = [self.source_message]
+        if self.minicroft is None:
+            self.minicroft = get_minicroft(self.skill_ids)
 
     def execute(self, timeout=30):
         # track initial source/destination for use in routing tests
@@ -140,10 +146,10 @@ class End2EndTest:
 
         # the capture session will store all messages until capture.finish()
         #  even if multiple messages are emitted
-        capture = CaptureSession(get_minicroft(self.skill_ids),
+        capture = CaptureSession(self.minicroft, eof_msgs=self.eof_msgs,
                                  ignore_messages=self.ignore_messages)
         for source_message in self.source_message:
-            capture.capture(source_message, self.eof_msgs, timeout)
+            capture.capture(source_message, timeout)
 
         # final message list
         messages = capture.finish()
@@ -204,7 +210,7 @@ class End2EndTest:
 
     def serialize(self, anonymize=True) -> SerializedTest:
         src = [self.anonymize_message(m) if anonymize else m
-                    for m in self.source_message]
+               for m in self.source_message]
         expected = [self.anonymize_message(m) if anonymize else m
                     for m in self.expected_messages]
         data = {
@@ -234,17 +240,18 @@ class End2EndTest:
     @classmethod
     def from_message(cls, message: Message,
                      skill_ids: List[str],
-                     eof_msgs: Optional[List[str]]=None,
-                     flip_points:  Optional[List[str]]=None,
-                     ignore_messages:  Optional[List[str]]=None,
+                     eof_msgs: Optional[List[str]] = None,
+                     flip_points: Optional[List[str]] = None,
+                     ignore_messages: Optional[List[str]] = None,
                      timeout=20) -> 'End2EndTest':
         eof_msgs = eof_msgs or DEFAULT_EOF
         flip_points = flip_points or DEFAULT_FLIP_POINTS
         ignore_messages = ignore_messages or DEFAULT_IGNORED
 
         capture = CaptureSession(get_minicroft(skill_ids),
+                                 eof_msgs=eof_msgs,
                                  ignore_messages=ignore_messages)
-        capture.capture(message, eof_msgs, timeout)
+        capture.capture(message, timeout)
 
         return End2EndTest(
             skill_ids=skill_ids,
@@ -254,7 +261,7 @@ class End2EndTest:
         )
 
     @staticmethod
-    def from_path(path:str) -> 'End2EndTest':
+    def from_path(path: str) -> 'End2EndTest':
         with open(path) as f:
             return End2EndTest.deserialize(f.read())
 
@@ -264,7 +271,7 @@ class End2EndTest:
 
 
 if __name__ == "__main__":
-    #LOG.set_level("CRITICAL")
+    # LOG.set_level("CRITICAL")
 
     session = Session("123")
     session.lang = "en-US"  # change lang, pipeline, whatever as needed
@@ -283,7 +290,6 @@ if __name__ == "__main__":
             Message("ovos.utterance.handled", {}),
         ]
     )
-
 
     test.execute()
 
