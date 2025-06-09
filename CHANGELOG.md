@@ -1,12 +1,12 @@
 # Changelog
 
-## [0.1.0a1](https://github.com/TigreGotico/ovoscope/tree/0.1.0a1) (2025-06-09)
+## [0.1.1a1](https://github.com/TigreGotico/ovoscope/tree/0.1.1a1) (2025-06-09)
 
-[Full Changelog](https://github.com/TigreGotico/ovoscope/compare/0.0.1...0.1.0a1)
+[Full Changelog](https://github.com/TigreGotico/ovoscope/compare/0.1.0...0.1.1a1)
 
 **Merged pull requests:**
 
-- feat: serialize tests to json [\#1](https://github.com/TigreGotico/ovoscope/pull/1) ([JarbasAl](https://github.com/JarbasAl))
+- refactor: capture\_session\_class [\#3](https://github.com/TigreGotico/ovoscope/pull/3) ([JarbasAl](https://github.com/JarbasAl))
 
 
 
