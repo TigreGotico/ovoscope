@@ -21,15 +21,20 @@ SerializedTest = Dict[str, Union[str, bool, List[str], SerializedMessage]]
 DEFAULT_IGNORED = ["ovos.skills.settings_changed"]
 DEFAULT_EOF = ["ovos.utterance.handled"]
 DEFAULT_FLIP_POINTS = ["recognizer_loop:utterance"]
-
+DEFAULT_KEEP_SRC = ["ovos.skills.fallback.ping"]
 
 class MiniCroft(SkillManager):
     def __init__(self, skill_ids, *args, **kwargs):
+        self.boot_messages: List[Message] = []
         bus = FakeBus()
+        bus.on("message", self.handle_boot_message)
         self.skill_ids = skill_ids
         self.intent_service = IntentService(bus)
         self.scheduler = EventScheduler(bus, schedule_file="/tmp/schetest.json")
         super().__init__(bus, *args, **kwargs)
+
+    def handle_boot_message(self, message: str):
+        self.boot_messages.append(Message.deserialize(message))
 
     def load_metadata_transformers(self, cfg):
         self.intent_service.metadata_plugins.config = cfg
@@ -52,6 +57,7 @@ class MiniCroft(SkillManager):
         self.load_plugin_skills()
         LOG.info("Skills all loaded!")
         self.status.set_ready()
+        self.bus.remove("message", self.handle_boot_message)
 
     def stop(self):
         super().stop()
@@ -115,6 +121,7 @@ class End2EndTest:
     skill_ids: List[str]  # skill_ids to load during the test
     source_message: Union[Message, List[Message]]  # to be emitted, sequentially if a list
     expected_messages: List[Message]  # tests are performed against message list
+    expected_boot_sequence: List[Message] = dataclasses.field(default_factory=list)  # check before any tests are run
     ignore_messages: List[str] = dataclasses.field(default_factory=lambda: DEFAULT_IGNORED)
 
     # if received, end message capture
@@ -122,11 +129,13 @@ class End2EndTest:
 
     # messages after which source and destination flip in the message.context
     flip_points: List[str] = dataclasses.field(default_factory=lambda: DEFAULT_FLIP_POINTS)
+    keep_original_src: List[str] = dataclasses.field(default_factory=lambda: DEFAULT_KEEP_SRC)
 
     minicroft: Optional[MiniCroft] = None
     managed: bool = False
 
     # test assertions to run
+    test_boot_sequence: bool = True
     test_session_lang: bool = True
     test_session_pipeline: bool = True
     test_msg_type: bool = True
@@ -143,9 +152,18 @@ class End2EndTest:
         if self.minicroft is None:
             self.minicroft = get_minicroft(self.skill_ids)
             self.managed = True
+
+        if self.test_boot_sequence and self.expected_boot_sequence:
+            for expected, received in zip(self.expected_boot_sequence, self.minicroft.boot_messages):
+                assert expected.msg_type == received.msg_type
+                for k, v in expected.data.items():
+                    assert received.data[k] == v
+                for k, v in expected.context.items():
+                    assert received.context[k] == v
+
         # track initial source/destination for use in routing tests
-        e_src = self.source_message[0].context.get("source")
-        e_dst = self.source_message[0].context.get("destination")
+        e_src = o_src = self.source_message[0].context.get("source")
+        e_dst = o_dst = self.source_message[0].context.get("destination")
 
         # the capture session will store all messages until capture.finish()
         #  even if multiple messages are emitted
@@ -174,8 +192,12 @@ class End2EndTest:
                 if self.test_routing:
                     r_src = received.context.get("source")
                     r_dst = received.context.get("destination")
-                    assert e_src == r_src
-                    assert e_dst == r_dst
+                    if expected.msg_type in self.keep_original_src:
+                        assert o_src == r_src # compare against original
+                        assert o_dst == r_dst
+                    else:
+                        assert e_src == r_src # compare against expected
+                        assert e_dst == r_dst
                     if expected.msg_type in self.flip_points:
                         e_src, e_dst = e_dst, e_src
 
@@ -262,10 +284,13 @@ class End2EndTest:
                                  ignore_messages=ignore_messages)
         capture.capture(message, timeout)
         minicroft.stop()
+        expected_messages = capture.finish()
+        for m in expected_messages:
+            print(m.msg_type, m.data)
         return End2EndTest(
             skill_ids=skill_ids,
             source_message=message,
-            expected_messages=capture.finish(),
+            expected_messages=expected_messages,
             flip_points=flip_points
         )
 
