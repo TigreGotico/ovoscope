@@ -1,12 +1,12 @@
 # Changelog
 
-## [0.4.0a1](https://github.com/TigreGotico/ovoscope/tree/0.4.0a1) (2025-06-09)
+## [0.5.0a1](https://github.com/TigreGotico/ovoscope/tree/0.5.0a1) (2025-06-10)
 
-[Full Changelog](https://github.com/TigreGotico/ovoscope/compare/0.3.2...0.4.0a1)
+[Full Changelog](https://github.com/TigreGotico/ovoscope/compare/0.4.0...0.5.0a1)
 
 **Merged pull requests:**
 
-- feat: boot sequence tests + improve routing tests [\#13](https://github.com/TigreGotico/ovoscope/pull/13) ([JarbasAl](https://github.com/JarbasAl))
+- feat: better support for testing active skills and session across mul… [\#15](https://github.com/TigreGotico/ovoscope/pull/15) ([JarbasAl](https://github.com/JarbasAl))
 
 
 
