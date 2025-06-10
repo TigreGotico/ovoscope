@@ -185,7 +185,7 @@ class End2EndTest:
         capture = CaptureSession(self.minicroft, eof_msgs=self.eof_msgs,
                                  ignore_messages=self.ignore_messages)
         for idx, source_message in enumerate(self.source_message):
-            if "session" not in source_message.context:
+            if "session" not in source_message.context and len(capture.responses):
                 # propagate session updates as a client would do
                 source_message.context["session"] = capture.responses[-1].context["session"]
             capture.capture(source_message, timeout)
