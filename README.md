@@ -4,6 +4,8 @@
 
 It contains the full core runtime environment using a lightweight in-process `ovos-core`, allowing skill developers to test the full skill message flow, from utterance to intent handling to final bus responses — without launching a full assistant stack.
 
+![image](https://github.com/user-attachments/assets/10a10ff5-64b7-42fd-86bd-cb6a5db769dd)
+
 > Like a microscope for your OVOS skills.
 
 ---
