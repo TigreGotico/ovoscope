@@ -1,12 +1,12 @@
 # Changelog
 
-## [0.5.0a1](https://github.com/TigreGotico/ovoscope/tree/0.5.0a1) (2025-06-10)
+## [0.5.1a1](https://github.com/TigreGotico/ovoscope/tree/0.5.1a1) (2025-06-10)
 
-[Full Changelog](https://github.com/TigreGotico/ovoscope/compare/0.4.0...0.5.0a1)
+[Full Changelog](https://github.com/TigreGotico/ovoscope/compare/0.5.0...0.5.1a1)
 
 **Merged pull requests:**
 
-- feat: better support for testing active skills and session across mul… [\#15](https://github.com/TigreGotico/ovoscope/pull/15) ([JarbasAl](https://github.com/JarbasAl))
+- fix: sess injection [\#17](https://github.com/TigreGotico/ovoscope/pull/17) ([JarbasAl](https://github.com/JarbasAl))
 
 
 
