@@ -1,3 +1,5 @@
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/TigreGotico/ovoscope)
+
 # OvoScope
 
 **OvoScope** is an end-to-end testing framework for [OVOS](https://openvoiceos.org) skills. 
