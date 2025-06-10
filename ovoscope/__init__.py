@@ -19,9 +19,14 @@ SerializedMessage = Dict[str, Union[str, Dict[str, Any]]]
 SerializedTest = Dict[str, Union[str, bool, List[str], SerializedMessage]]
 
 DEFAULT_IGNORED = ["ovos.skills.settings_changed"]
+GUI_IGNORED = ["gui.clear.namespace",
+               "gui.value.set",
+               "mycroft.gui.screen.close",
+               "gui.page.show"]
 DEFAULT_EOF = ["ovos.utterance.handled"]
 DEFAULT_FLIP_POINTS = ["recognizer_loop:utterance"]
 DEFAULT_KEEP_SRC = ["ovos.skills.fallback.ping"]
+
 
 class MiniCroft(SkillManager):
     def __init__(self, skill_ids, *args, **kwargs):
@@ -44,10 +49,12 @@ class MiniCroft(SkillManager):
         LOG.info("loading skill plugins")
         plugins = find_skill_plugins()
         for skill_id, plug in plugins.items():
+            LOG.debug(f"Found skill: {skill_id}")
             if skill_id not in self.skill_ids:
                 continue
             if skill_id not in self.plugin_skills:
                 self._load_plugin_skill(skill_id, plug)
+                LOG.info(f"Loaded skill: {skill_id}")
 
         self.bus.emit(Message("mycroft.skills.train"))  # tell any pipeline plugins to train loaded intents
 
@@ -123,6 +130,7 @@ class End2EndTest:
     expected_messages: List[Message]  # tests are performed against message list
     expected_boot_sequence: List[Message] = dataclasses.field(default_factory=list)  # check before any tests are run
     ignore_messages: List[str] = dataclasses.field(default_factory=lambda: DEFAULT_IGNORED)
+    ignore_gui: bool = True
 
     # if received, end message capture
     eof_msgs: List[str] = dataclasses.field(default_factory=lambda: DEFAULT_EOF)
@@ -131,22 +139,26 @@ class End2EndTest:
     flip_points: List[str] = dataclasses.field(default_factory=lambda: DEFAULT_FLIP_POINTS)
     keep_original_src: List[str] = dataclasses.field(default_factory=lambda: DEFAULT_KEEP_SRC)
 
+    activation_points: Dict[str, str] = dataclasses.field(default_factory=dict)
+    deactivation_points: Dict[str, str] = dataclasses.field(default_factory=dict)
+
     minicroft: Optional[MiniCroft] = None
     managed: bool = False
 
     # test assertions to run
     test_boot_sequence: bool = True
-    test_session_lang: bool = True
-    test_session_pipeline: bool = True
     test_msg_type: bool = True
     test_msg_data: bool = True
     test_msg_context: bool = True
+    test_active_skills: bool = True
     test_routing: bool = True
 
     def __post_init__(self):
         # standardize to be a list
         if isinstance(self.source_message, Message):
             self.source_message = [self.source_message]
+        if self.ignore_gui:
+            self.ignore_messages += GUI_IGNORED
 
     def execute(self, timeout=30):
         if self.minicroft is None:
@@ -161,6 +173,9 @@ class End2EndTest:
                 for k, v in expected.context.items():
                     assert received.context[k] == v
 
+        sess = SessionManager.get(self.source_message[0])
+        active_skills = [s[0] for s in sess.active_skills]
+
         # track initial source/destination for use in routing tests
         e_src = o_src = self.source_message[0].context.get("source")
         e_dst = o_dst = self.source_message[0].context.get("destination")
@@ -169,18 +184,28 @@ class End2EndTest:
         #  even if multiple messages are emitted
         capture = CaptureSession(self.minicroft, eof_msgs=self.eof_msgs,
                                  ignore_messages=self.ignore_messages)
-        for source_message in self.source_message:
+        for idx, source_message in enumerate(self.source_message):
+            if "session" not in source_message.context:
+                # propagate session updates as a client would do
+                source_message.context["session"] = capture.responses[-1].context["session"]
             capture.capture(source_message, timeout)
 
         # final message list
         messages = capture.finish()
         for expected, received in zip(self.expected_messages, messages):
+
+            # track expected active skills
+            if received.msg_type in self.activation_points and "skill_id" in received.context:
+                active_skills.append(received.context["skill_id"])
+            if received.msg_type in self.deactivation_points and "skill_id" in received.context:
+                if received.context["skill_id"] in active_skills:
+                    active_skills.remove(received.context["skill_id"])
+
             try:
                 if expected.msg_type in self.flip_points:
                     e_src = expected.context.get("source")
                     e_dst = expected.context.get("destination")
-                sess_e = SessionManager.get(expected) if "session" in expected.context else None
-                sess_r = SessionManager.get(received) if "session" in received.context else None
+
                 if self.test_msg_type:
                     assert expected.msg_type == received.msg_type
                 if self.test_msg_data:
@@ -193,19 +218,21 @@ class End2EndTest:
                     r_src = received.context.get("source")
                     r_dst = received.context.get("destination")
                     if expected.msg_type in self.keep_original_src:
-                        assert o_src == r_src # compare against original
+                        assert o_src == r_src  # compare against original
                         assert o_dst == r_dst
                     else:
-                        assert e_src == r_src # compare against expected
+                        assert e_src == r_src  # compare against expected
                         assert e_dst == r_dst
                     if expected.msg_type in self.flip_points:
                         e_src, e_dst = e_dst, e_src
 
-                if sess_e and sess_r:
-                    if self.test_session_lang:
-                        assert sess_e.lang == sess_r.lang
-                    if self.test_session_pipeline:
-                        assert sess_e.pipeline == sess_r.pipeline
+                if self.test_active_skills and active_skills:
+                    sess = SessionManager.get(received)
+                    skills = [s[0] for s in sess.active_skills]
+                    for s in active_skills:
+                        assert s in skills, f"{s} missing from active skills list"
+
+
             except Exception as e:
                 print(f"Expected message: {expected.serialize()}")
                 print(f"Received message: {received.serialize()}")
@@ -249,8 +276,6 @@ class End2EndTest:
             "expected_messages": [json.loads(m.serialize()) for m in expected],
             "eof_msgs": self.eof_msgs,
             "flip_points": self.flip_points,
-            "test_session_lang": self.test_session_lang,
-            "test_session_pipeline": self.test_session_pipeline,
             "test_msg_type": self.test_msg_type,
             "test_msg_data": self.test_msg_data,
             "test_msg_context": self.test_msg_context,
@@ -268,12 +293,14 @@ class End2EndTest:
         return End2EndTest(**kwargs)
 
     @classmethod
-    def from_message(cls, message: Message,
+    def from_message(cls, message: Union[Message, List[Message]],
                      skill_ids: List[str],
                      eof_msgs: Optional[List[str]] = None,
                      flip_points: Optional[List[str]] = None,
                      ignore_messages: Optional[List[str]] = None,
                      timeout=20) -> 'End2EndTest':
+        if not isinstance(message, list):
+            message = [message]
         eof_msgs = eof_msgs or DEFAULT_EOF
         flip_points = flip_points or DEFAULT_FLIP_POINTS
         ignore_messages = ignore_messages or DEFAULT_IGNORED
@@ -282,7 +309,13 @@ class End2EndTest:
         capture = CaptureSession(minicroft,
                                  eof_msgs=eof_msgs,
                                  ignore_messages=ignore_messages)
-        capture.capture(message, timeout)
+
+        for idx, source_message in enumerate(message):
+            if "session" not in source_message.context:
+                # propagate session updates as a client would do
+                source_message.context["session"] = capture.responses[-1].context["session"]
+            capture.capture(source_message, timeout)
+
         minicroft.stop()
         expected_messages = capture.finish()
         return End2EndTest(
@@ -304,6 +337,26 @@ class End2EndTest:
 
 if __name__ == "__main__":
     # LOG.set_level("CRITICAL")
+    session = Session("123")
+    session.pipeline = ["ovos-converse-pipeline-plugin", "ovos-padatious-pipeline-plugin-high"]
+
+    message1 = Message("recognizer_loop:utterance",
+                       {"utterances": ["start parrot mode"], "lang": "en-US"},
+                       {"session": session.serialize(), "source": "A", "destination": "B"})
+    message2 = Message("recognizer_loop:utterance",
+                       {"utterances": ["echo test"], "lang": "en-US"},
+                       {"source": "A", "destination": "B"})
+    message3 = Message("recognizer_loop:utterance",
+                       {"utterances": ["stop parrot"], "lang": "en-US"},
+                       {"source": "A", "destination": "B"})
+    message4 = Message("recognizer_loop:utterance",
+                       {"utterances": ["echo test"], "lang": "en-US"},
+                       {"source": "A", "destination": "B"})
+    autotest = End2EndTest.from_message([message1, message2, message3, message4],
+                                        skill_ids=["ovos-skill-parrot.openvoiceos"])
+    print(autotest)
+    autotest.save("test.json")
+    exit()
 
     session = Session("123")
     session.lang = "en-US"  # change lang, pipeline, whatever as needed
@@ -344,10 +397,6 @@ if __name__ == "__main__":
 
     # export / import
     test.deserialize(test.serialize())  # smoke test
-
-    autotest = End2EndTest.from_message(message, skill_ids=["ovos-skill-hello-world.openvoiceos"])
-    print(autotest)
-    autotest.save("test.json")
 
     t = End2EndTest.from_path("test.json")
     print(t)
