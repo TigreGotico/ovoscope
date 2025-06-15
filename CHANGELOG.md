@@ -1,12 +1,12 @@
 # Changelog
 
-## [0.5.1a1](https://github.com/TigreGotico/ovoscope/tree/0.5.1a1) (2025-06-10)
+## [0.6.0a1](https://github.com/TigreGotico/ovoscope/tree/0.6.0a1) (2025-06-15)
 
-[Full Changelog](https://github.com/TigreGotico/ovoscope/compare/0.5.0...0.5.1a1)
+[Full Changelog](https://github.com/TigreGotico/ovoscope/compare/0.5.1...0.6.0a1)
 
 **Merged pull requests:**
 
-- fix: sess injection [\#17](https://github.com/TigreGotico/ovoscope/pull/17) ([JarbasAl](https://github.com/JarbasAl))
+- feat: test message order and allowing injecting active skills during … [\#19](https://github.com/TigreGotico/ovoscope/pull/19) ([JarbasAl](https://github.com/JarbasAl))
 
 
 

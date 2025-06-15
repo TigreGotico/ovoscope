@@ -23,7 +23,7 @@ GUI_IGNORED = ["gui.clear.namespace",
                "gui.value.set",
                "mycroft.gui.screen.close",
                "gui.page.show"]
-DEFAULT_EOF = ["ovos.utterance.handled"]
+DEFAULT_EOF = ["ovos.utterance.handled", "skill.converse.response"]
 DEFAULT_FLIP_POINTS = ["recognizer_loop:utterance"]
 DEFAULT_KEEP_SRC = ["ovos.skills.fallback.ping"]
 
@@ -131,6 +131,7 @@ class End2EndTest:
     expected_boot_sequence: List[Message] = dataclasses.field(default_factory=list)  # check before any tests are run
     ignore_messages: List[str] = dataclasses.field(default_factory=lambda: DEFAULT_IGNORED)
     ignore_gui: bool = True
+    inject_active: List[str] = dataclasses.field(default_factory=list)
 
     # if received, end message capture
     eof_msgs: List[str] = dataclasses.field(default_factory=lambda: DEFAULT_EOF)
@@ -146,6 +147,7 @@ class End2EndTest:
     managed: bool = False
 
     # test assertions to run
+    test_message_number: bool = True
     test_boot_sequence: bool = True
     test_msg_type: bool = True
     test_msg_data: bool = True
@@ -167,13 +169,16 @@ class End2EndTest:
 
         if self.test_boot_sequence and self.expected_boot_sequence:
             for expected, received in zip(self.expected_boot_sequence, self.minicroft.boot_messages):
-                assert expected.msg_type == received.msg_type
+                assert expected.msg_type == received.msg_type, f"expected boot message_type '{expected.msg_type}' | got '{received.msg_type}'"
                 for k, v in expected.data.items():
                     assert received.data[k] == v
                 for k, v in expected.context.items():
                     assert received.context[k] == v
 
         sess = SessionManager.get(self.source_message[0])
+        for s in self.inject_active:
+            print(f"activating skill pre-test: {s}")
+            sess.activate_skill(s)
         active_skills = [s[0] for s in sess.active_skills]
 
         # track initial source/destination for use in routing tests
@@ -192,6 +197,16 @@ class End2EndTest:
 
         # final message list
         messages = capture.finish()
+
+        if self.test_message_number:
+            n1 = len(self.expected_messages)
+            n2 = len(messages)
+            if n1 != n2:
+                for i, n in enumerate(messages):
+                    print("\t", i, n.serialize())
+            assert n1 == n2, f"got {n2} messages, expected {n1}"
+
+
         for expected, received in zip(self.expected_messages, messages):
 
             # track expected active skills
@@ -207,10 +222,10 @@ class End2EndTest:
                     e_dst = expected.context.get("destination")
 
                 if self.test_msg_type:
-                    assert expected.msg_type == received.msg_type
+                    assert expected.msg_type == received.msg_type, f"expected message_type '{expected.msg_type}' | got '{received.msg_type}'"
                 if self.test_msg_data:
                     for k, v in expected.data.items():
-                        assert received.data[k] == v
+                        assert received.data[k] == v, f"message data mismatch for key '{k}' - expected '{v}' | got '{received.data[k]}'"
                 if self.test_msg_context:
                     for k, v in expected.context.items():
                         assert received.context[k] == v
