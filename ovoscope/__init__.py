@@ -7,13 +7,13 @@ from typing import Union, List, Dict, Any, Optional
 
 from ovos_bus_client.message import Message
 from ovos_bus_client.session import SessionManager, Session
-from ovos_bus_client.util.scheduler import EventScheduler
 from ovos_core.intent_services import IntentService
 from ovos_core.skill_manager import SkillManager
 from ovos_plugin_manager.skills import find_skill_plugins
 from ovos_utils.fakebus import FakeBus
 from ovos_utils.log import LOG
 from ovos_utils.process_utils import ProcessState
+from ovos_workshop.skills.ovos import OVOSSkill
 
 SerializedMessage = Dict[str, Union[str, Dict[str, Any]]]
 SerializedTest = Dict[str, Union[str, bool, List[str], SerializedMessage]]
@@ -23,20 +23,33 @@ GUI_IGNORED = ["gui.clear.namespace",
                "gui.value.set",
                "mycroft.gui.screen.close",
                "gui.page.show"]
-DEFAULT_EOF = ["ovos.utterance.handled", "skill.converse.response"]
+DEFAULT_EOF = ["ovos.utterance.handled"]
 DEFAULT_FLIP_POINTS = ["recognizer_loop:utterance"]
 DEFAULT_KEEP_SRC = ["ovos.skills.fallback.ping"]
+DEFAULT_ACTIVATION = []
+DEFAULT_DEACTIVATION = ["intent.service.skills.deactivate"]
 
 
 class MiniCroft(SkillManager):
-    def __init__(self, skill_ids, *args, **kwargs):
+    def __init__(self, skill_ids,
+                 enable_installer=False,
+                 enable_intent_service=True,
+                 enable_event_scheduler=False,
+                 enable_file_watcher=False,
+                 enable_skill_api=True,
+                 extra_skills: Optional[Dict[str, OVOSSkill]] = None,
+                 *args, **kwargs):
         self.boot_messages: List[Message] = []
         bus = FakeBus()
         bus.on("message", self.handle_boot_message)
         self.skill_ids = skill_ids
-        self.intent_service = IntentService(bus)
-        self.scheduler = EventScheduler(bus, schedule_file="/tmp/schetest.json")
-        super().__init__(bus, *args, **kwargs)
+        self.extra_skills = extra_skills or {}
+        super().__init__(bus, enable_installer=enable_installer,
+                         enable_skill_api=enable_skill_api,
+                         enable_file_watcher=enable_file_watcher,
+                         enable_intent_service=enable_intent_service,
+                         enable_event_scheduler=enable_event_scheduler,
+                         *args, **kwargs)
 
     def handle_boot_message(self, message: str):
         self.boot_messages.append(Message.deserialize(message))
@@ -56,6 +69,12 @@ class MiniCroft(SkillManager):
                 self._load_plugin_skill(skill_id, plug)
                 LOG.info(f"Loaded skill: {skill_id}")
 
+        for skill_id, plug in self.extra_skills.items():
+            LOG.debug(f"Injected test skill: {skill_id}")
+            if skill_id not in self.plugin_skills:
+                self._load_plugin_skill(skill_id, plug)
+                LOG.info(f"Loaded test skill: {skill_id}")
+
         self.bus.emit(Message("mycroft.skills.train"))  # tell any pipeline plugins to train loaded intents
 
     def run(self):
@@ -68,19 +87,18 @@ class MiniCroft(SkillManager):
 
     def stop(self):
         super().stop()
-        self.scheduler.shutdown()
         self.bus.close()
 
 
-def get_minicroft(skill_ids: Union[List[str], str]):
+def get_minicroft(skill_ids: Union[List[str], str], *args, **kwargs):
     if isinstance(skill_ids, str):
         skill_ids = [skill_ids]
     assert isinstance(skill_ids, list)
-    croft1 = MiniCroft(skill_ids)
-    croft1.start()
-    while croft1.status.state != ProcessState.READY:
-        sleep(0.2)
-    return croft1
+    croft = MiniCroft(skill_ids, *args, **kwargs)
+    croft.start()
+    while croft.status.state != ProcessState.READY:
+        sleep(0.1)
+    return croft
 
 
 @dataclasses.dataclass()
@@ -132,6 +150,8 @@ class End2EndTest:
     ignore_messages: List[str] = dataclasses.field(default_factory=lambda: DEFAULT_IGNORED)
     ignore_gui: bool = True
     inject_active: List[str] = dataclasses.field(default_factory=list)
+    final_session: Optional[Session] = None
+    disallow_extra_active_skills: bool = False
 
     # if received, end message capture
     eof_msgs: List[str] = dataclasses.field(default_factory=lambda: DEFAULT_EOF)
@@ -140,8 +160,8 @@ class End2EndTest:
     flip_points: List[str] = dataclasses.field(default_factory=lambda: DEFAULT_FLIP_POINTS)
     keep_original_src: List[str] = dataclasses.field(default_factory=lambda: DEFAULT_KEEP_SRC)
 
-    activation_points: Dict[str, str] = dataclasses.field(default_factory=dict)
-    deactivation_points: Dict[str, str] = dataclasses.field(default_factory=dict)
+    activation_points: List[str] = dataclasses.field(default_factory=lambda: DEFAULT_ACTIVATION)
+    deactivation_points:List[str] = dataclasses.field(default_factory=lambda: DEFAULT_DEACTIVATION)
 
     minicroft: Optional[MiniCroft] = None
     managed: bool = False
@@ -154,6 +174,9 @@ class End2EndTest:
     test_msg_context: bool = True
     test_active_skills: bool = True
     test_routing: bool = True
+    test_final_session: bool = True
+
+    verbose: bool = True
 
     def __post_init__(self):
         # standardize to be a list
@@ -169,21 +192,31 @@ class End2EndTest:
 
         if self.test_boot_sequence and self.expected_boot_sequence:
             for expected, received in zip(self.expected_boot_sequence, self.minicroft.boot_messages):
-                assert expected.msg_type == received.msg_type, f"expected boot message_type '{expected.msg_type}' | got '{received.msg_type}'"
+                assert expected.msg_type == received.msg_type, f"❌ expected boot message_type '{expected.msg_type}' | got '{received.msg_type}'"
+                if self.verbose:
+                    print(f"✅ boot message type match: '{expected.msg_type}'")
                 for k, v in expected.data.items():
-                    assert received.data[k] == v
+                    assert received.data[k] == v, f"❌ boot message data mismatch for key '{k}' - expected '{v}' | got '{received.data[k]}'"
+                    if self.verbose:
+                        print(f"✅ boot message data match: '{k}' -> '{v}'")
                 for k, v in expected.context.items():
-                    assert received.context[k] == v
+                    assert received.context[k] == v, f"❌ boot message context mismatch for key '{k}' - expected '{v}' | got '{received.data[k]}'"
+                    if self.verbose:
+                        print(f"✅ boot message context match: '{k}' -> '{v}'")
 
         sess = SessionManager.get(self.source_message[0])
         for s in self.inject_active:
-            print(f"activating skill pre-test: {s}")
+            if self.verbose:
+                print(f"💡 activating skill pre-test: {s}")
             sess.activate_skill(s)
         active_skills = [s[0] for s in sess.active_skills]
 
         # track initial source/destination for use in routing tests
         e_src = o_src = self.source_message[0].context.get("source")
         e_dst = o_dst = self.source_message[0].context.get("destination")
+        if self.verbose:
+            print(f"💡 original message.context source: '{o_src}'")
+            print(f"💡 original message.context destination: '{o_dst}'")
 
         # the capture session will store all messages until capture.finish()
         #  even if multiple messages are emitted
@@ -202,56 +235,93 @@ class End2EndTest:
             n1 = len(self.expected_messages)
             n2 = len(messages)
             if n1 != n2:
+                first_bad = None
                 for i, n in enumerate(messages):
+                    if i < len(self.expected_messages):
+                        e = self.expected_messages[i]
+                        if e.msg_type != n.msg_type and first_bad is None:
+                            first_bad = n
+                            print("⚠️ first differing message:", f"{n.msg_type} (received)", f"{e.msg_type} (expected)")
                     print("\t", i, n.serialize())
-            assert n1 == n2, f"got {n2} messages, expected {n1}"
-
+            assert n1 == n2, f"❌ got {n2} messages, expected {n1}"
+            if self.verbose:
+                print(f"✅ got {n1} messages as expected")
 
         for expected, received in zip(self.expected_messages, messages):
+            if self.verbose:
+                print(f"> Expected message: {expected.serialize()}")
+                print(f"> Received message: {received.serialize()}")
 
+            skill_id = received.context.get("skill_id")
             # track expected active skills
             if received.msg_type in self.activation_points and "skill_id" in received.context:
-                active_skills.append(received.context["skill_id"])
+                if self.verbose:
+                    print(f"💡 reached activation point: '{expected.msg_type}'")
+                    print(f"💡 skill MUST be active from now on: '{skill_id}'")
+                active_skills.append(skill_id)
             if received.msg_type in self.deactivation_points and "skill_id" in received.context:
-                if received.context["skill_id"] in active_skills:
-                    active_skills.remove(received.context["skill_id"])
+                if self.verbose:
+                    print(f"💡 reached deactivation point: '{expected.msg_type}'")
+                    print(f"💡 skill must NOT be active from now on: '{skill_id}'")
+                if skill_id in active_skills:
+                    active_skills.remove(skill_id)
 
-            try:
+            if expected.msg_type in self.flip_points:
+                e_src = expected.context.get("source")
+                e_dst = expected.context.get("destination")
+
+            if self.test_msg_type:
+                assert expected.msg_type == received.msg_type, f"❌ expected message_type '{expected.msg_type}' | got '{received.msg_type}'"
+                if self.verbose:
+                    print(f"✅ got expected message_type: '{expected.msg_type}'")
+            if self.test_msg_data:
+                for k, v in expected.data.items():
+                    assert received.data[k] == v, f"❌ message data mismatch for key '{k}' - expected '{v}' | got '{received.data[k]}'"
+                    if self.verbose:
+                        print(f"✅ got expected message data '{k}: '{v}'")
+            if self.test_msg_context:
+                for k, v in expected.context.items():
+                    assert received.context[k] == v, f"❌ message context mismatch for key '{k}' - expected '{v}' | got '{received.context[k]}'"
+                    if self.verbose:
+                        print(f"✅ got expected message context '{k}: '{v}'")
+            if self.test_routing:
+                r_src = received.context.get("source")
+                r_dst = received.context.get("destination")
+                if expected.msg_type in self.keep_original_src:
+                    assert o_src == r_src, f"❌ source doesnt match! expected '{o_src}' got '{r_src}'"
+                    assert o_dst == r_dst, f"❌ destination doesnt match! expected '{o_dst}' got '{r_dst}'"
+                else:
+                    assert e_src == r_src, f"❌ source doesnt match! expected '{e_src}' got '{r_src}'"
+                    assert e_dst == r_dst, f"❌ destination doesnt match! expected '{e_dst}' got '{r_dst}'"
+                if self.verbose:
+                    # print(f"💡 source/destination flip point: '{expected.msg_type}'")
+                    print(f"✅ message source matches: {r_src}")
+                    print(f"✅ message destination matches: {r_dst}")
+
                 if expected.msg_type in self.flip_points:
-                    e_src = expected.context.get("source")
-                    e_dst = expected.context.get("destination")
+                    e_src, e_dst = e_dst, e_src
+                    if self.verbose:
+                        print(f"💡 source/destination flip point: '{expected.msg_type}'")
+                        print(f"💡 new expected message.context source: '{e_src}' | got {r_src}")
+                        print(f"💡 new expected message.context destination: '{e_dst}' | got {r_dst}")
 
-                if self.test_msg_type:
-                    assert expected.msg_type == received.msg_type, f"expected message_type '{expected.msg_type}' | got '{received.msg_type}'"
-                if self.test_msg_data:
-                    for k, v in expected.data.items():
-                        assert received.data[k] == v, f"message data mismatch for key '{k}' - expected '{v}' | got '{received.data[k]}'"
-                if self.test_msg_context:
-                    for k, v in expected.context.items():
-                        assert received.context[k] == v
-                if self.test_routing:
-                    r_src = received.context.get("source")
-                    r_dst = received.context.get("destination")
-                    if expected.msg_type in self.keep_original_src:
-                        assert o_src == r_src  # compare against original
-                        assert o_dst == r_dst
-                    else:
-                        assert e_src == r_src  # compare against expected
-                        assert e_dst == r_dst
-                    if expected.msg_type in self.flip_points:
-                        e_src, e_dst = e_dst, e_src
-
-                if self.test_active_skills and active_skills:
-                    sess = SessionManager.get(received)
-                    skills = [s[0] for s in sess.active_skills]
-                    for s in active_skills:
-                        assert s in skills, f"{s} missing from active skills list"
+            if self.test_active_skills and active_skills:
+                sess = SessionManager.get(received)
+                skills = [s[0] for s in sess.active_skills]
+                for s in active_skills:
+                    assert s in skills, f"❌ '{s}' missing from active skills list"
+                    if self.verbose:
+                        print(f"✅ skill active as expected: '{s}'")
+                if self.disallow_extra_active_skills:
+                    for s in skills:
+                        assert s in active_skills, f"❌ '{s}' extra skill in active skills list"
 
 
-            except Exception as e:
-                print(f"Expected message: {expected.serialize()}")
-                print(f"Received message: {received.serialize()}")
-                raise
+        if self.test_final_session and self.final_session:
+            last_sess = SessionManager.get(messages[-1])
+            expected_sess = self.final_session.serialize()
+            for k, v in last_sess.serialize().items():
+                assert expected_sess[k] == v, f"❌ final session mismatch: expected '{k}' to be {v} | got '{expected_sess[k]}'"
 
         if self.managed:
             self.minicroft.stop()
@@ -313,14 +383,14 @@ class End2EndTest:
                      eof_msgs: Optional[List[str]] = None,
                      flip_points: Optional[List[str]] = None,
                      ignore_messages: Optional[List[str]] = None,
-                     timeout=20) -> 'End2EndTest':
+                     timeout=20, *args, **kwargs) -> 'End2EndTest':
         if not isinstance(message, list):
             message = [message]
         eof_msgs = eof_msgs or DEFAULT_EOF
         flip_points = flip_points or DEFAULT_FLIP_POINTS
         ignore_messages = ignore_messages or DEFAULT_IGNORED
 
-        minicroft = get_minicroft(skill_ids)
+        minicroft = get_minicroft(skill_ids, *args, **kwargs)
         capture = CaptureSession(minicroft,
                                  eof_msgs=eof_msgs,
                                  ignore_messages=ignore_messages)

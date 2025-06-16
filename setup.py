@@ -38,7 +38,7 @@ setup(
     license="Apache-2.0",
     packages=find_packages(),
     install_requires=[
-        "ovos-core>=1.1.0"
+        "ovos-core>=2.0.4a2"
     ],
     python_requires='>=3.10',
     classifiers=[
