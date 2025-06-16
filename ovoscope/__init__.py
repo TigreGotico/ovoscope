@@ -281,7 +281,7 @@ class End2EndTest:
                         print(f"✅ got expected message data '{k}: '{v}'")
             if self.test_msg_context:
                 for k, v in expected.context.items():
-                    assert received.context[k] == v, f"❌ message context mismatch for key '{k}' - expected '{v}' | got '{received.data[k]}'"
+                    assert received.context[k] == v, f"❌ message context mismatch for key '{k}' - expected '{v}' | got '{received.context[k]}'"
                     if self.verbose:
                         print(f"✅ got expected message context '{k}: '{v}'")
             if self.test_routing:
