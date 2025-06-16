@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.0a2](https://github.com/TigreGotico/ovoscope/tree/0.7.0a2) (2025-06-16)
+
+[Full Changelog](https://github.com/TigreGotico/ovoscope/compare/0.7.0a1...0.7.0a2)
+
+**Merged pull requests:**
+
+- verbose flag [\#23](https://github.com/TigreGotico/ovoscope/pull/23) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [0.7.0a1](https://github.com/TigreGotico/ovoscope/tree/0.7.0a1) (2025-06-16)
 
 [Full Changelog](https://github.com/TigreGotico/ovoscope/compare/0.6.0...0.7.0a1)
