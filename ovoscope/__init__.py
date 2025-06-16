@@ -151,6 +151,7 @@ class End2EndTest:
     ignore_gui: bool = True
     inject_active: List[str] = dataclasses.field(default_factory=list)
     final_session: Optional[Session] = None
+    disallow_extra_active_skills: bool = False
 
     # if received, end message capture
     eof_msgs: List[str] = dataclasses.field(default_factory=lambda: DEFAULT_EOF)
@@ -247,6 +248,9 @@ class End2EndTest:
                 print(f"✅ got {n1} messages as expected")
 
         for expected, received in zip(self.expected_messages, messages):
+            if self.verbose:
+                print(f"> Expected message: {expected.serialize()}")
+                print(f"> Received message: {received.serialize()}")
 
             skill_id = received.context.get("skill_id")
             # track expected active skills
@@ -262,60 +266,56 @@ class End2EndTest:
                 if skill_id in active_skills:
                     active_skills.remove(skill_id)
 
-            try:
+            if expected.msg_type in self.flip_points:
+                e_src = expected.context.get("source")
+                e_dst = expected.context.get("destination")
+
+            if self.test_msg_type:
+                assert expected.msg_type == received.msg_type, f"❌ expected message_type '{expected.msg_type}' | got '{received.msg_type}'"
+                if self.verbose:
+                    print(f"✅ got expected message_type: '{expected.msg_type}'")
+            if self.test_msg_data:
+                for k, v in expected.data.items():
+                    assert received.data[k] == v, f"❌ message data mismatch for key '{k}' - expected '{v}' | got '{received.data[k]}'"
+                    if self.verbose:
+                        print(f"✅ got expected message data '{k}: '{v}'")
+            if self.test_msg_context:
+                for k, v in expected.context.items():
+                    assert received.context[k] == v, f"❌ message context mismatch for key '{k}' - expected '{v}' | got '{received.data[k]}'"
+                    if self.verbose:
+                        print(f"✅ got expected message context '{k}: '{v}'")
+            if self.test_routing:
+                r_src = received.context.get("source")
+                r_dst = received.context.get("destination")
+                if expected.msg_type in self.keep_original_src:
+                    assert o_src == r_src, f"❌ source doesnt match! expected '{o_src}' got '{r_src}'"
+                    assert o_dst == r_dst, f"❌ destination doesnt match! expected '{o_dst}' got '{r_dst}'"
+                else:
+                    assert e_src == r_src, f"❌ source doesnt match! expected '{e_src}' got '{r_src}'"
+                    assert e_dst == r_dst, f"❌ destination doesnt match! expected '{e_dst}' got '{r_dst}'"
+                if self.verbose:
+                    # print(f"💡 source/destination flip point: '{expected.msg_type}'")
+                    print(f"✅ message source matches: {r_src}")
+                    print(f"✅ message destination matches: {r_dst}")
+
                 if expected.msg_type in self.flip_points:
-                    e_src = expected.context.get("source")
-                    e_dst = expected.context.get("destination")
-
-                if self.test_msg_type:
-                    assert expected.msg_type == received.msg_type, f"❌ expected message_type '{expected.msg_type}' | got '{received.msg_type}'"
+                    e_src, e_dst = e_dst, e_src
                     if self.verbose:
-                        print(f"✅ got expected message_type: '{expected.msg_type}'")
-                if self.test_msg_data:
-                    for k, v in expected.data.items():
-                        assert received.data[k] == v, f"❌ message data mismatch for key '{k}' - expected '{v}' | got '{received.data[k]}'"
-                        if self.verbose:
-                            print(f"✅ got expected message data '{k}: '{v}'")
-                if self.test_msg_context:
-                    for k, v in expected.context.items():
-                        assert received.context[k] == v, f"❌ message context mismatch for key '{k}' - expected '{v}' | got '{received.data[k]}'"
-                        if self.verbose:
-                            print(f"✅ got expected message context '{k}: '{v}'")
-                if self.test_routing:
-                    r_src = received.context.get("source")
-                    r_dst = received.context.get("destination")
-                    if expected.msg_type in self.keep_original_src:
-                        assert o_src == r_src, f"❌ source doesnt match! expected '{o_src}' got '{r_src}'"
-                        assert o_dst == r_dst, f"❌ destination doesnt match! expected '{o_dst}' got '{r_dst}'"
-                    else:
-                        assert e_src == r_src, f"❌ source doesnt match! expected '{e_src}' got '{r_src}'"
-                        assert e_dst == r_dst, f"❌ destination doesnt match! expected '{e_dst}' got '{r_dst}'"
+                        print(f"💡 source/destination flip point: '{expected.msg_type}'")
+                        print(f"💡 new expected message.context source: '{e_src}' | got {r_src}")
+                        print(f"💡 new expected message.context destination: '{e_dst}' | got {r_dst}")
+
+            if self.test_active_skills and active_skills:
+                sess = SessionManager.get(received)
+                skills = [s[0] for s in sess.active_skills]
+                for s in active_skills:
+                    assert s in skills, f"❌ '{s}' missing from active skills list"
                     if self.verbose:
-                        # print(f"💡 source/destination flip point: '{expected.msg_type}'")
-                        print(f"✅ message source matches: {r_src}")
-                        print(f"✅ message destination matches: {r_dst}")
-
-                    if expected.msg_type in self.flip_points:
-                        e_src, e_dst = e_dst, e_src
-                        if self.verbose:
-                            print(f"💡 source/destination flip point: '{expected.msg_type}'")
-                            print(f"💡 new expected message.context source: '{e_src}' | got {r_src}")
-                            print(f"💡 new expected message.context destination: '{e_dst}' | got {r_dst}")
-
-                if self.test_active_skills and active_skills:
-                    sess = SessionManager.get(received)
-                    skills = [s[0] for s in sess.active_skills]
-                    for s in active_skills:
-                        assert s in skills, f"❌ '{s}' missing from active skills list"
-                        if self.verbose:
-                            print(f"✅ skill active as expected: '{s}'")
+                        print(f"✅ skill active as expected: '{s}'")
+                if self.disallow_extra_active_skills:
                     for s in skills:
                         assert s in active_skills, f"❌ '{s}' extra skill in active skills list"
 
-            except Exception as e:
-                print(f"> Expected message: {expected.serialize()}")
-                print(f"> Received message: {received.serialize()}")
-                raise
 
         if self.test_final_session and self.final_session:
             last_sess = SessionManager.get(messages[-1])
