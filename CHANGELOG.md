@@ -1,20 +1,12 @@
 # Changelog
 
-## [0.7.0a2](https://github.com/TigreGotico/ovoscope/tree/0.7.0a2) (2025-06-16)
+## [0.7.1a1](https://github.com/TigreGotico/ovoscope/tree/0.7.1a1) (2025-06-16)
 
-[Full Changelog](https://github.com/TigreGotico/ovoscope/compare/0.7.0a1...0.7.0a2)
-
-**Merged pull requests:**
-
-- verbose flag [\#23](https://github.com/TigreGotico/ovoscope/pull/23) ([JarbasAl](https://github.com/JarbasAl))
-
-## [0.7.0a1](https://github.com/TigreGotico/ovoscope/tree/0.7.0a1) (2025-06-16)
-
-[Full Changelog](https://github.com/TigreGotico/ovoscope/compare/0.6.0...0.7.0a1)
+[Full Changelog](https://github.com/TigreGotico/ovoscope/compare/0.7.0...0.7.1a1)
 
 **Merged pull requests:**
 
-- feat: allow injecting test skills without plugin entrypoint [\#21](https://github.com/TigreGotico/ovoscope/pull/21) ([JarbasAl](https://github.com/JarbasAl))
+- improve last\_session tests and docs [\#25](https://github.com/TigreGotico/ovoscope/pull/25) ([JarbasAl](https://github.com/JarbasAl))
 
 
 
