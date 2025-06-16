@@ -7,12 +7,12 @@ from typing import Union, List, Dict, Any, Optional
 
 from ovos_bus_client.message import Message
 from ovos_bus_client.session import SessionManager, Session
-from ovos_bus_client.util.scheduler import EventScheduler
 from ovos_core.intent_services import IntentService
 from ovos_core.skill_manager import SkillManager
 from ovos_plugin_manager.skills import find_skill_plugins
 from ovos_utils.fakebus import FakeBus
 from ovos_utils.log import LOG
+from ovos_workshop.skills.ovos import OVOSSkill
 from ovos_utils.process_utils import ProcessState
 
 SerializedMessage = Dict[str, Union[str, Dict[str, Any]]]
@@ -23,20 +23,31 @@ GUI_IGNORED = ["gui.clear.namespace",
                "gui.value.set",
                "mycroft.gui.screen.close",
                "gui.page.show"]
-DEFAULT_EOF = ["ovos.utterance.handled", "skill.converse.response"]
+DEFAULT_EOF = ["ovos.utterance.handled"]
 DEFAULT_FLIP_POINTS = ["recognizer_loop:utterance"]
 DEFAULT_KEEP_SRC = ["ovos.skills.fallback.ping"]
 
 
 class MiniCroft(SkillManager):
-    def __init__(self, skill_ids, *args, **kwargs):
+    def __init__(self, skill_ids,
+                 enable_installer=False,
+                 enable_intent_service=True,
+                 enable_event_scheduler=False,
+                 enable_file_watcher=False,
+                 enable_skill_api=True,
+                 extra_skills: Optional[Dict[str, OVOSSkill]] = None,
+                 *args, **kwargs):
         self.boot_messages: List[Message] = []
         bus = FakeBus()
         bus.on("message", self.handle_boot_message)
         self.skill_ids = skill_ids
-        self.intent_service = IntentService(bus)
-        self.scheduler = EventScheduler(bus, schedule_file="/tmp/schetest.json")
-        super().__init__(bus, *args, **kwargs)
+        self.extra_skills = extra_skills or {}
+        super().__init__(bus, enable_installer=enable_installer,
+                         enable_skill_api=enable_skill_api,
+                         enable_file_watcher=enable_file_watcher,
+                         enable_intent_service=enable_intent_service,
+                         enable_event_scheduler=enable_event_scheduler
+                         *args, **kwargs)
 
     def handle_boot_message(self, message: str):
         self.boot_messages.append(Message.deserialize(message))
@@ -56,6 +67,12 @@ class MiniCroft(SkillManager):
                 self._load_plugin_skill(skill_id, plug)
                 LOG.info(f"Loaded skill: {skill_id}")
 
+        for skill_id, plug in self.extra_skills.items():
+            LOG.debug(f"Injected test skill: {skill_id}")
+            if skill_id not in self.plugin_skills:
+                self._load_plugin_skill(skill_id, plug)
+                LOG.info(f"Loaded test skill: {skill_id}")
+
         self.bus.emit(Message("mycroft.skills.train"))  # tell any pipeline plugins to train loaded intents
 
     def run(self):
@@ -72,15 +89,15 @@ class MiniCroft(SkillManager):
         self.bus.close()
 
 
-def get_minicroft(skill_ids: Union[List[str], str]):
+def get_minicroft(skill_ids: Union[List[str], str], *args, **kwargs):
     if isinstance(skill_ids, str):
         skill_ids = [skill_ids]
     assert isinstance(skill_ids, list)
-    croft1 = MiniCroft(skill_ids)
-    croft1.start()
-    while croft1.status.state != ProcessState.READY:
-        sleep(0.2)
-    return croft1
+    croft = MiniCroft(skill_ids, *args, **kwargs)
+    croft.start()
+    while croft.status.state != ProcessState.READY:
+        sleep(0.1)
+    return croft
 
 
 @dataclasses.dataclass()
@@ -202,7 +219,13 @@ class End2EndTest:
             n1 = len(self.expected_messages)
             n2 = len(messages)
             if n1 != n2:
+                first_bad = None
                 for i, n in enumerate(messages):
+                    if i < len(self.expected_messages):
+                        e = self.expected_messages[i]
+                        if e.msg_type != n.msg_type and first_bad is None:
+                            first_bad = n
+                            print("first differing message:", f"{n.msg_type} (received)",  f"{e.msg_type} (expected)")
                     print("\t", i, n.serialize())
             assert n1 == n2, f"got {n2} messages, expected {n1}"
 
