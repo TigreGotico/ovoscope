@@ -106,15 +106,20 @@ def get_minicroft(skill_ids: Union[List[str], str], *args, **kwargs):
 class CaptureSession:
     minicroft: MiniCroft
     responses: List[Message] = dataclasses.field(default_factory=list)
+    async_responses: List[Message] = dataclasses.field(default_factory=list)
+
     eof_msgs: List[str] = dataclasses.field(default_factory=lambda: DEFAULT_EOF)
     ignore_messages: List[str] = dataclasses.field(default_factory=lambda: DEFAULT_IGNORED)
+    async_messages: List[str] = dataclasses.field(default_factory=list) # these come from an external thread and might come in any order
     done: threading.Event = dataclasses.field(default_factory=lambda: threading.Event())
 
     def handle_message(self, msg: str):
         if self.done.is_set():
             return
         msg = Message.deserialize(msg)
-        if msg.msg_type not in self.ignore_messages:
+        if msg.msg_type in self.async_messages:
+            self.async_responses.append(msg)
+        elif msg.msg_type not in self.ignore_messages:
             self.responses.append(msg)
 
     def handle_end_of_test(self, msg: Message):
@@ -159,6 +164,7 @@ class End2EndTest:
     eof_msgs: List[str] = dataclasses.field(default_factory=lambda: DEFAULT_EOF) # if received, end message capture
     ignore_messages: List[str] = dataclasses.field(default_factory=lambda: DEFAULT_IGNORED) # pretend any message in this list was not emitted for testing purposes
     ignore_gui: bool = True # ignore the gui namespace bus messages, usually unwanted unless explicitly testing gui integration
+    async_messages: List[str] = dataclasses.field(default_factory=list) # these come from an external thread and might come in any order, validate they are received outside the main test
 
     ##############################
     # message routing test params
@@ -183,6 +189,8 @@ class End2EndTest:
     # sub-test configuration
     ###########################
     test_message_number: bool = True
+    test_async_messages: bool = True
+    test_async_message_number: bool = True
     test_boot_sequence: bool = True
     test_msg_type: bool = True
     test_msg_data: bool = True
@@ -241,7 +249,8 @@ class End2EndTest:
         # the capture session will store all messages until capture.finish()
         #  even if multiple messages are emitted
         capture = CaptureSession(self.minicroft, eof_msgs=self.eof_msgs,
-                                 ignore_messages=self.ignore_messages)
+                                 ignore_messages=self.ignore_messages,
+                                 async_messages=self.async_messages)
         for idx, source_message in enumerate(self.source_message):
             if "session" not in source_message.context and len(capture.responses):
                 # propagate session updates as a client would do
@@ -266,6 +275,20 @@ class End2EndTest:
             assert n1 == n2, f"❌ got {n2} messages, expected {n1}"
             if self.verbose:
                 print(f"✅ got {n1} messages as expected")
+
+        if self.test_async_message_number:
+            n1 = len(self.async_messages)
+            n2 = len(capture.async_responses)
+            assert n1 == n2, f"❌ got {n2} async messages, expected {n1}"
+            if self.verbose:
+                print(f"✅ got {n1} async messages as expected")
+
+        if self.test_async_messages:
+            async_types = [m.msg_type for m in capture.async_responses]
+            for m in self.async_messages:
+                assert m in async_types, f"❌ missing async message: {m}"
+                if self.verbose:
+                    print(f"✅ got async message '{m}' as expected")
 
         for expected, received in zip(self.expected_messages, messages):
             if self.verbose:
@@ -422,6 +445,7 @@ class End2EndTest:
                      eof_msgs: Optional[List[str]] = None,
                      flip_points: Optional[List[str]] = None,
                      ignore_messages: Optional[List[str]] = None,
+                     async_messages: Optional[List[str]] = None,
                      timeout=20, *args, **kwargs) -> 'End2EndTest':
         if not isinstance(message, list):
             message = [message]
@@ -432,7 +456,8 @@ class End2EndTest:
         minicroft = get_minicroft(skill_ids, *args, **kwargs)
         capture = CaptureSession(minicroft,
                                  eof_msgs=eof_msgs,
-                                 ignore_messages=ignore_messages)
+                                 ignore_messages=ignore_messages,
+                                 async_messages=async_messages)
 
         for idx, source_message in enumerate(message):
             if "session" not in source_message.context:
