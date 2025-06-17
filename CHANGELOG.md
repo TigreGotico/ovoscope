@@ -1,12 +1,12 @@
 # Changelog
 
-## [0.7.1a1](https://github.com/TigreGotico/ovoscope/tree/0.7.1a1) (2025-06-16)
+## [0.7.2a1](https://github.com/TigreGotico/ovoscope/tree/0.7.2a1) (2025-06-17)
 
-[Full Changelog](https://github.com/TigreGotico/ovoscope/compare/0.7.0...0.7.1a1)
+[Full Changelog](https://github.com/TigreGotico/ovoscope/compare/0.7.1...0.7.2a1)
 
 **Merged pull requests:**
 
-- improve last\_session tests and docs [\#25](https://github.com/TigreGotico/ovoscope/pull/25) ([JarbasAl](https://github.com/JarbasAl))
+- feat: async messages support [\#27](https://github.com/TigreGotico/ovoscope/pull/27) ([JarbasAl](https://github.com/JarbasAl))
 
 
 
