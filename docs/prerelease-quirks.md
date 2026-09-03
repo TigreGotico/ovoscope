@@ -26,23 +26,23 @@ reset at each stable release.
   never completes within `OVOSCOPE_TRAINED_TIMEOUT` seconds it raises
   `RuntimeError` naming only the skill(s) that registered an intent and
   never got a trained reply, not every skill in the load — instead of
-  returning a croft whose intents aren't actually matchable yet. Opt out
-  with `wait_for_trained=False`. See
+  returning a croft whose intents aren't actually matchable yet. This is
+  accurate because the trained event carries no skill_id, so timeouts can
+  only blame the registered set. Opt out with `wait_for_trained=False`. See
   [docs/minicroft.md](minicroft.md#factory-get_minicroft).
 - `DEFAULT_IGNORED` (and therefore every exact sequence comparison) now also
   filters `mycroft.skills.trained` (`TRAINING_NOISE`), MiniCroft's own
   training orchestration noise, before comparing — never by subsequence
   matching, so a genuinely missing or duplicated message still fails. See
   [docs/capture-session.md](capture-session.md#default-ignored-messages).
-- `ovoscope`'s own `ovos-core` dependency now pulls the `[lgpl,plugins]`
-  extras (same pair the installer itself uses). Bare `ovos-core` ships no
-  pipeline matchers at all; `[plugins]` alone covers Adapt and Padacioso but
-  not Padatious, which is LGPL-licensed and lives in `[lgpl]` — a
-  `[plugins]`-only pin still silently drops every Padatious-registered
-  intent to no match. Test environments that installed `ovos-core`
-  explicitly (bypassing ovoscope's own dependency) still need both extras
-  (or the specific pipeline plugins under test) themselves. See
-  [docs/minicroft.md](minicroft.md#factory-get_minicroft).
+- `ovoscope`'s own `ovos-core` dependency pins `[plugins]>=3.0.1a1`, the
+  first release carrying Padatious in the `[plugins]` extra (padatious
+  dropped libfann and is now pure Apache). Bare `ovos-core` ships no pipeline
+  matchers at all; `[plugins]` covers Adapt, Padatious, and Padacioso. Test
+  environments that installed `ovos-core` explicitly (bypassing ovoscope's
+  own dependency) should use matching or newer versions and extras, or the
+  specific pipeline plugins under test.
+  See [docs/minicroft.md](minicroft.md#factory-get_minicroft).
 - The `pytest_pycollect_makemodule` hook no longer lets a module-level
   `pytest.skip()`/`pytest.importorskip()` abort the whole collection
   session. `pytest.skip.Exception` derives from `BaseException`, not
