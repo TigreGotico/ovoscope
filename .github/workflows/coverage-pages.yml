@@ -16,5 +16,5 @@ jobs:
       python_version: "3.12"
       test_path: "test/unittests/"
       coverage_source: "ovoscope"
-      install_extras: "audio,pydantic"
+      install_extras: "audio,pydantic,media,listener,bench"
       deploy_pages: true

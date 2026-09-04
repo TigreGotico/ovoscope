@@ -24,6 +24,13 @@ from ovos_utils.ocp import MediaState
 
 from ovoscope.media import MockOCPBackend, OCPCaptureSession, OCPPlayerHarness
 
+try:
+    from ovoscope.media import MockOCPBackendV2
+    from ovos_plugin_manager.templates.media import PlaybackEvent
+    _HAS_MEDIABACKEND_V2 = True
+except ImportError:
+    _HAS_MEDIABACKEND_V2 = False
+
 
 def test_media_harness_reexported_from_package() -> None:
     """The ovos-media harness is reachable from the top-level package, like the
@@ -157,6 +164,31 @@ class TestMockOCPBackendStateTransitions:
         assert self.backend.is_playing is False
 
 
+@pytest.mark.skipif(not _HAS_MEDIABACKEND_V2,
+                    reason="requires the MediaBackend v2 template (unreleased "
+                           "ovos-plugin-manager)")
+class TestMockOCPBackendV2StateTransitions:
+    """State mutation methods on the v2 mock backend."""
+
+    def setup_method(self) -> None:
+        self.bus = FakeBus()
+        self.backend = MockOCPBackendV2(config={}, bus=self.bus)
+
+    def test_load_track_succeeds_and_sets_current_uri(self) -> None:
+        assert self.backend.load_track("http://example.com/song.mp3") is True
+        assert self.backend.current_uri == "http://example.com/song.mp3"
+
+    def test_failed_load_clears_current_uri(self) -> None:
+        """A failed load must not leave a PREVIOUS track's uri behind —
+        simulate_invalid_stream()/report_track_end() report against
+        current_uri, and the daemon's staleness check compares that uri
+        against what it last loaded. A stale current_uri here would make
+        the mock lie about exactly the field that check relies on."""
+        self.backend.load_track("http://example.com/song.mp3")
+        assert self.backend.load_track("http://example.com/invalid.mp3") is False
+        assert self.backend.current_uri is None
+
+
 # ---------------------------------------------------------------------------
 # OCPCaptureSession tests
 # ---------------------------------------------------------------------------
@@ -223,31 +255,104 @@ except ImportError:
     _HAS_OVOS_MEDIA = False
 
 
-if _HAS_OVOS_MEDIA:
+if _HAS_OVOS_MEDIA and _HAS_MEDIABACKEND_V2:
     from ovos_plugin_manager.templates.media import AudioPlayerBackend
 
     class _RecordingBackend(AudioPlayerBackend):
-        """A real OCP ``MediaBackend`` stand-in built by a factory.
+        """A real OCP ``MediaBackend`` v2 stand-in built by a factory.
 
-        Subclasses the genuine ``AudioPlayerBackend`` (not ``MockOCPBackend``) so
-        its ``load_track`` emits the real ``ovos.common_play.media.state``
-        ``LOADED_MEDIA`` event the live ``AudioService`` routes on. Records the uri
-        its ``play()`` is driven with — analogous to a Music Assistant backend
-        calling ``client.play_media(uri)`` — so a test can assert the player's play
-        path actually reached the injected backend.
+        Subclasses the genuine ``AudioPlayerBackend`` (not ``MockOCPBackendV2``)
+        so its ``load_track`` return value is exactly what a real plugin's would
+        be — the live ``AudioService`` routes LOADED_MEDIA/INVALID_MEDIA on it.
+        Records the uri its ``play()`` is driven with — analogous to a Music
+        Assistant backend calling ``client.play_media(uri)`` — so a test can
+        assert the player's play path actually reached the injected backend.
         """
 
         def __init__(self, bus):
             super().__init__(config={}, bus=bus)
             self.play_calls = []
             self.is_playing = False
+            self._uri = None
 
         def supported_uris(self):
             return ["library", "http", "https"]
 
-        def play(self, repeat: bool = False):
+        def load_track(self, uri, metadata=None):
+            self._uri = uri
+            return True
+
+        def play(self):
             self.is_playing = True
-            self.play_calls.append(self._now_playing)
+            self.play_calls.append(self._uri)
+
+        def _stop(self):
+            self.is_playing = False
+            return True
+
+        def pause(self):
+            pass
+
+        def resume(self):
+            pass
+
+        def lower_volume(self):
+            pass
+
+        def restore_volume(self):
+            pass
+
+        def get_track_length(self):
+            return 0
+
+        def get_track_position(self):
+            return 0
+
+        def set_track_position(self, milliseconds):
+            pass
+
+elif _HAS_OVOS_MEDIA:
+    from ovos_plugin_manager.templates.audio import AudioBackend
+
+    class _RecordingBackend(AudioBackend):
+        """A real OCP ``MediaBackend`` v1 stand-in built by a factory — used
+        against a released ``ovos-plugin-manager`` (no v2 template) so the
+        backend-injection cells below stay green there too.
+
+        Mirrors the v2 ``_RecordingBackend`` above as closely as the v1
+        contract allows: v1's ``load_track`` takes no ``metadata`` and
+        returns nothing, and ``stop`` is the concrete method a plugin
+        overrides directly (no ``_stop`` split).
+        """
+
+        def __init__(self, bus):
+            super().__init__(config={}, bus=bus)
+            self.play_calls = []
+            self.is_playing = False
+            self._uri = None
+
+        def supported_uris(self):
+            return ["library", "http", "https"]
+
+        def load_track(self, uri):
+            # v1 has no bool return channel: a plugin signals a successful
+            # load by emitting this event itself, on the SHARED bus topic
+            # BaseMediaService.__init__ actually subscribes
+            # handle_media_state_change to (ovos.common_play.media.state,
+            # not the namespaced ovos.{namespace}.service.media.state
+            # MockOCPBackend emits — that one is never subscribed to by a
+            # real BaseMediaService and is inert there). The real v1 daemon
+            # waits for this event before calling play(), so skipping it
+            # would silently strand the track at LOADING_MEDIA forever.
+            self._uri = uri
+            self.bus.emit(Message(
+                "ovos.common_play.media.state",
+                {"state": MediaState.LOADED_MEDIA},
+            ))
+
+        def play(self, repeat=False):
+            self.is_playing = True
+            self.play_calls.append(self._uri)
 
         def stop(self):
             self.is_playing = False
@@ -280,10 +385,13 @@ if _HAS_OVOS_MEDIA:
 class TestOCPPlayerHarnessBackendInjection:
     """OCPPlayerHarness(backend_factory=...) drives a real injected backend."""
 
-    def test_default_factory_is_mock_backend(self) -> None:
+    @pytest.mark.skipif(not _HAS_MEDIABACKEND_V2,
+                        reason="requires the MediaBackend v2 template (unreleased "
+                               "ovos-plugin-manager)")
+    def test_default_factory_is_mock_backend_v2(self) -> None:
         with OCPPlayerHarness() as h:
-            assert isinstance(h.backend, MockOCPBackend)
-            assert type(h.backend) is MockOCPBackend
+            assert isinstance(h.backend, MockOCPBackendV2)
+            assert type(h.backend) is MockOCPBackendV2
 
     def test_injected_backend_is_used(self) -> None:
         with OCPPlayerHarness(backend_factory=_RecordingBackend) as h:
@@ -298,6 +406,149 @@ class TestOCPPlayerHarnessBackendInjection:
                               playback=PlaybackType.AUDIO))
             assert h.backend.is_playing is True
             assert h.backend.play_calls == ["library://track/42"]
+
+
+@pytest.mark.skipif(not _HAS_MEDIABACKEND_V2,
+                    reason="requires the MediaBackend v2 template (unreleased "
+                           "ovos-plugin-manager)")
+class TestOCPHarnessMediaBackendV2Propagation:
+    """A MediaBackend v2 backend's physical PlaybackEvent reports must reach
+    the real ovos-media daemon (BaseMediaService._handle_backend_event) and
+    come out the other side as the matching ``ovos.common_play.*`` wire
+    message — this is exactly what OCPPlayerHarness's
+    ``bind_event_reporter`` wiring (added for the v2 port) makes possible.
+
+    Uses ``backend_factory=MockOCPBackendV2`` so the harness swaps in a real
+    ``AudioService`` (see OCPPlayerHarness.__enter__'s real-backend branch)
+    instead of the MagicMock the harness uses by default.
+    """
+
+    @staticmethod
+    def _factory(bus):
+        from ovoscope.media import MockOCPBackendV2
+        return MockOCPBackendV2(config={}, bus=bus)
+
+    def test_play_reports_track_start_and_reaches_track_state(self) -> None:
+        from ovos_utils.ocp import MediaEntry, PlaybackType, TrackState
+        with OCPPlayerHarness(backend_factory=self._factory) as h:
+            with OCPCaptureSession(h.bus) as session:
+                h.play(MediaEntry(uri="http://example.com/song.mp3",
+                                  playback=PlaybackType.AUDIO))
+            assert h.backend.is_playing is True
+            session.assert_sequence("ovos.common_play.track.state")
+            track_state_msgs = [m for m in session.messages
+                                if m.msg_type == "ovos.common_play.track.state"]
+            assert track_state_msgs[-1].data["state"] == TrackState.PLAYING_AUDIO
+
+    def test_pause_then_resume_toggles_backend_state(self) -> None:
+        from ovos_utils.ocp import MediaEntry, PlaybackType
+        with OCPPlayerHarness(backend_factory=self._factory) as h:
+            h.play(MediaEntry(uri="http://example.com/song.mp3",
+                              playback=PlaybackType.AUDIO))
+            h.pause()
+            assert h.backend.is_paused is True
+            h.resume()
+            assert h.backend.is_paused is False
+
+    def test_simulate_end_reports_end_of_media_wire_state(self) -> None:
+        from ovos_utils.ocp import MediaEntry, MediaState, PlaybackType
+        with OCPPlayerHarness(backend_factory=self._factory) as h:
+            h.play(MediaEntry(uri="http://example.com/song.mp3",
+                              playback=PlaybackType.AUDIO))
+            with OCPCaptureSession(h.bus) as session:
+                h.simulate_track_end()
+            session.assert_sequence("ovos.common_play.media.state")
+            state_msgs = [m for m in session.messages
+                         if m.msg_type == "ovos.common_play.media.state"]
+            assert state_msgs[-1].data["state"] == MediaState.END_OF_MEDIA
+
+    def test_simulate_invalid_stream_reports_invalid_media(self) -> None:
+        from ovos_utils.ocp import MediaEntry, MediaState, PlaybackType
+        with OCPPlayerHarness(backend_factory=self._factory) as h:
+            h.play(MediaEntry(uri="http://example.com/song.mp3",
+                              playback=PlaybackType.AUDIO))
+            with OCPCaptureSession(h.bus) as session:
+                h.simulate_invalid_stream()
+            session.assert_sequence("ovos.common_play.media.state")
+            state_msgs = [m for m in session.messages
+                         if m.msg_type == "ovos.common_play.media.state"]
+            assert state_msgs[-1].data["state"] == MediaState.INVALID_MEDIA
+
+    def test_stop_clears_backend_playing_state(self) -> None:
+        """An explicit ``stop()`` request clears the backend's own playing
+        state via its concrete ``stop()``/``_stop()`` template pair — the
+        daemon's own ``_perform_stop`` always emits END_OF_MEDIA on the wire
+        for an explicit stop, so the STOPPED/END_OF_MEDIA disambiguation
+        report_track_end() performs is only observable at the plugin level
+        (see MediaBackendHarness in test_media_backend_harness.py).
+        """
+        from ovos_utils.ocp import MediaEntry, PlaybackType
+        with OCPPlayerHarness(backend_factory=self._factory) as h:
+            h.play(MediaEntry(uri="http://example.com/song.mp3",
+                              playback=PlaybackType.AUDIO))
+            time.sleep(1.1)  # clear BaseMediaService.stop()'s post-play guard window
+            h.stop()
+            assert h.backend.is_playing is False
+
+    def test_backend_is_bound_at_setup_before_any_play(self) -> None:
+        """The harness explicitly binds each injected backend's event
+        reporter right after wiring it onto the real AudioService — BEFORE
+        any play() request ever reaches it (BaseMediaService._play() would
+        otherwise be the first thing to bind it, and only on the first
+        play()). Without the explicit bind, ``report()`` on a backend that
+        has not played yet silently no-ops at the OPM template layer
+        (``_event_reporter is None``) instead of reaching the daemon at
+        all — a remote/side-channel backend (Cast, MPRIS: see
+        MediaBackend's own docstring) can report a physical event from its
+        own status listener at any time, including before the daemon has
+        asked it to do anything, so it must never be unbound.
+
+        A raw wire-message assertion can't observe this directly: the
+        daemon's own ``_handle_backend_event`` separately drops any report
+        from a backend that isn't ``self.current`` yet either way (correct,
+        unrelated behaviour) — so this asserts the wiring itself, not a
+        downstream side effect gated by a second, independent check.
+        """
+        backend = self._factory(FakeBus())
+        with OCPPlayerHarness(backend_factory=lambda bus: backend) as h:
+            # no play() call yet — bound purely by __enter__'s own wiring.
+            assert h.backend._event_reporter is not None
+
+
+@pytest.mark.skipif(not _HAS_MEDIABACKEND_V2,
+                    reason="requires the MediaBackend v2 template (unreleased "
+                           "ovos-plugin-manager)")
+class TestOCPHarnessMediaBackendV2DefaultMode:
+    """Default mode (no backend_factory): audio_service is a MagicMock, so
+    the daemon's own _handle_backend_event translation never runs.
+    OCPPlayerHarness's _mock_mode_event_reporter shim reproduces the same
+    wire messages for the default MockOCPBackendV2, so
+    simulate_track_end()/simulate_invalid_stream() stay meaningful without a
+    backend_factory."""
+
+    def test_simulate_track_end_reports_end_of_media_on_the_wire(self) -> None:
+        from ovos_utils.ocp import MediaEntry, MediaState, PlaybackType
+        with OCPPlayerHarness() as h:
+            h.play(MediaEntry(uri="http://example.com/song.mp3",
+                              playback=PlaybackType.AUDIO))
+            with OCPCaptureSession(h.bus) as session:
+                h.simulate_track_end()
+            session.assert_sequence("ovos.common_play.media.state")
+            state_msgs = [m for m in session.messages
+                         if m.msg_type == "ovos.common_play.media.state"]
+            assert state_msgs[-1].data["state"] == MediaState.END_OF_MEDIA
+
+    def test_simulate_invalid_stream_reports_invalid_media_on_the_wire(self) -> None:
+        from ovos_utils.ocp import MediaEntry, MediaState, PlaybackType
+        with OCPPlayerHarness() as h:
+            h.play(MediaEntry(uri="http://example.com/song.mp3",
+                              playback=PlaybackType.AUDIO))
+            with OCPCaptureSession(h.bus) as session:
+                h.simulate_invalid_stream()
+            session.assert_sequence("ovos.common_play.media.state")
+            state_msgs = [m for m in session.messages
+                         if m.msg_type == "ovos.common_play.media.state"]
+            assert state_msgs[-1].data["state"] == MediaState.INVALID_MEDIA
 
 
 @pytest.mark.skipif(not _HAS_OVOS_MEDIA,
@@ -481,3 +732,47 @@ class TestOCPHarnessWithoutHandlePlay:
         finally:
             if had_symbol:
                 BaseMediaService.handle_play = removed
+
+
+@pytest.mark.skipif(not _HAS_MEDIABACKEND_V2,
+                    reason="requires the MediaBackend v2 template (unreleased "
+                           "ovos-plugin-manager) — this class's assertion is "
+                           "specific to the v2 daemon's own None-return "
+                           "handling in AudioService._play()")
+class TestOCPHarnessV1BackendFactoryCompat:
+    """A plugin repo that has not yet ported to MediaBackend v2 can still
+    pass its v1 backend as backend_factory — the harness detects which
+    contract a backend speaks (hasattr(backend, "bind_event_reporter")) and
+    wires it accordingly (no BaseMediaService.track_start reference for a v1
+    backend against a v2 build, which is absent there and used to crash
+    __enter__ itself with AttributeError).
+
+    A v1 backend's ``load_track`` returns ``None`` rather than a bool, and
+    the real v2 ``AudioService._play()`` treats that as a failed load by
+    design (it logs "likely a MediaBackend v1 plugin ... upgrade the
+    plugin" and reports INVALID_MEDIA) — v1 plugins are not expected to
+    actually PLAY through the v2 daemon, only to not crash the harness on
+    startup. This assertion is specific to that v2-daemon behaviour, so the
+    class only runs when the v2 branches are installed: a released
+    ovos-media's own (v1-shaped) daemon does not have this None-check and
+    would not fail the load the same way. Playing a v1 backend end-to-end
+    against a released, v1-shaped daemon is exercised through
+    OCPPlayerHarness's default (no backend_factory) mock mode instead (see
+    TestMockOCPBackendStateTransitions), and directly against
+    MockOCPBackend's own unit tests (same class).
+    """
+
+    def test_v1_mock_backend_does_not_crash_harness_startup(self) -> None:
+        from ovos_utils.ocp import MediaEntry, MediaState, PlaybackType
+
+        def factory(bus):
+            return MockOCPBackend(config={}, bus=bus)
+
+        with OCPPlayerHarness(backend_factory=factory) as h:
+            assert isinstance(h.backend, MockOCPBackend)
+            h.play(MediaEntry(uri="http://example.com/song.mp3",
+                              playback=PlaybackType.AUDIO))
+            # the real v2 AudioService rejects a None-returning load_track
+            # as a failed load — this is ovos-media's own v1-detection
+            # behaviour, not something the harness controls.
+            h.assert_media_state(MediaState.INVALID_MEDIA)

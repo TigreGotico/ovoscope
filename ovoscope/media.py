@@ -26,6 +26,7 @@ Classes:
 
 import dataclasses
 import time
+from functools import partial
 from typing import Callable, List, Optional
 from unittest.mock import MagicMock, patch
 
@@ -33,6 +34,15 @@ from ovos_bus_client.message import Message
 from ovos_plugin_manager.templates.audio import AudioBackend
 from ovos_utils.fakebus import FakeBus
 from ovos_utils.ocp import MediaEntry, MediaState, PlayerState
+
+try:
+    from ovos_plugin_manager.templates.media import (
+        AudioPlayerBackend as _V2AudioPlayerBackend,
+        PlaybackEvent,
+    )
+except ImportError:  # pragma: no cover - opm floor always ships the v2 template
+    _V2AudioPlayerBackend = None
+    PlaybackEvent = None
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +247,188 @@ class MockOCPBackend(AudioBackend):
 
 
 # ---------------------------------------------------------------------------
+# MockOCPBackendV2
+# ---------------------------------------------------------------------------
+
+if _V2AudioPlayerBackend is not None:
+
+    class MockOCPBackendV2(_V2AudioPlayerBackend):
+        """A no-op MediaBackend v2 (``ovos_plugin_manager.templates.media``)
+        that records state transitions and can simulate the physical playback
+        events a real backend plugin reports.
+
+        Mirrors :class:`MockOCPBackend`'s bookkeeping (``is_playing``,
+        ``is_paused``, ``current_uri``, ``played_uris``), but speaks the v2
+        contract: ``load_track`` returns a bool instead of emitting a state
+        message itself, ``stop()`` is the concrete template method and
+        plugins implement ``_stop()``, and end-of-track events go through
+        ``report_track_end`` rather than a bus emit — the daemon (not the
+        plugin) is what turns those into ``ovos.common_play.*`` messages.
+
+        No actual audio is played. Every mutating method updates simple
+        Python attributes so tests can inspect them without mocks.
+
+        Args:
+            config: Backend configuration dict (may be empty).
+            bus: FakeBus instance shared with the service under test.
+            namespace: Backend namespace string, e.g. ``"audio"``.
+        """
+
+        def __init__(self, config: dict, bus: FakeBus,
+                    namespace: str = "audio") -> None:
+            """Initialise the backend with clean state.
+
+            Args:
+                config: Configuration dict forwarded to AudioPlayerBackend.__init__.
+                bus: FakeBus used by the enclosing service.
+                namespace: Namespace prefix (kept for parity with MockOCPBackend;
+                    v2 backends report events rather than emitting namespaced
+                    bus messages, so this is bookkeeping only).
+            """
+            super().__init__(config=config, bus=bus)
+            self.namespace: str = namespace
+            self.played_uris: List[str] = []
+            self.is_playing: bool = False
+            self.is_paused: bool = False
+            self.current_uri: Optional[str] = None
+
+        # ------------------------------------------------------------------
+        # MediaBackend v2 abstract interface
+        # ------------------------------------------------------------------
+
+        def supported_uris(self) -> List[str]:
+            """Return URI schemes supported by this backend.
+
+            Returns:
+                List of scheme strings: ``["file", "http", "https"]``.
+            """
+            return ["file", "http", "https"]
+
+        def load_track(self, uri: str, metadata: dict = None) -> bool:
+            """Record *uri* and report nothing — v2 ``load_track`` only
+            signals load success/failure via its return value, the daemon
+            owns the LOADED_MEDIA/INVALID_MEDIA transition.
+
+            Fails (returns False) for any uri containing ``"invalid"``, so
+            tests can exercise the daemon's failed-load path without a
+            separate manual trigger.
+
+            Args:
+                uri: URI of the track to load.
+                metadata: optional track metadata (unused by the mock).
+
+            Returns:
+                bool: False if *uri* contains ``"invalid"``, else True.
+            """
+            if "invalid" in uri:
+                # Clear current_uri on a failed load: leaving the PREVIOUS
+                # track's uri in place here would make simulate_invalid_stream()
+                # (which reports against current_uri) lie about the very
+                # staleness field _handle_backend_event uses to drop a
+                # late/mismatched END_OF_MEDIA/ERROR.
+                self.current_uri = None
+                return False
+            self.current_uri = uri
+            if uri not in self.played_uris:
+                self.played_uris.append(uri)
+            return True
+
+        def play(self) -> None:
+            """Mark the backend as playing and report ``TRACK_START``."""
+            self.is_playing = True
+            self.is_paused = False
+            self.report(PlaybackEvent.TRACK_START, uri=self.current_uri)
+
+        def _stop(self) -> bool:
+            """Perform the actual stop.
+
+            Returns:
+                True — ``BaseMediaService._perform_stop()`` gates on this.
+            """
+            self.is_playing = False
+            self.is_paused = False
+            return True
+
+        def pause(self) -> None:
+            """Pause playback and report ``PAUSED``."""
+            self.is_paused = True
+            self.report(PlaybackEvent.PAUSED, uri=self.current_uri)
+
+        def resume(self) -> None:
+            """Resume paused playback and report ``RESUMED``."""
+            self.is_paused = False
+            self.report(PlaybackEvent.RESUMED, uri=self.current_uri)
+
+        def lower_volume(self) -> None:
+            """Duck volume (no-op in mock)."""
+
+        def restore_volume(self) -> None:
+            """Restore ducked volume (no-op in mock)."""
+
+        def track_info(self) -> dict:
+            """Return minimal track info.
+
+            Returns:
+                Dict with ``"track"`` key containing ``current_uri``.
+            """
+            return {"track": self.current_uri}
+
+        def shutdown(self) -> None:
+            """Shut down the backend (no-op)."""
+
+        def get_track_length(self) -> int:
+            """Return track duration in ms.
+
+            Returns:
+                Always 0 — mock backend has no real audio.
+            """
+            return 0
+
+        def get_track_position(self) -> int:
+            """Return current playback position in ms.
+
+            Returns:
+                Always 0 — mock backend has no real audio.
+            """
+            return 0
+
+        def set_track_position(self, milliseconds: int) -> None:
+            """Seek to position (no-op).
+
+            Args:
+                milliseconds: Target position in ms.
+            """
+
+        # ------------------------------------------------------------------
+        # Test helpers
+        # ------------------------------------------------------------------
+
+        def simulate_end(self) -> None:
+            """Report ``END_OF_MEDIA`` for the current track via
+            ``report_track_end`` — the way a real backend's exit/status
+            callback reports a natural end, not by emitting a bus message
+            itself (the daemon owns that translation).
+            """
+            self.is_playing = False
+            self.report_track_end(uri=self.current_uri)
+
+        def simulate_invalid_stream(self) -> None:
+            """Report ``ERROR`` for the current track via
+            ``report_track_end(error=...)`` — simulating a broken or
+            unplayable stream discovered after a successful load.
+            """
+            self.is_playing = False
+            self.report_track_end(uri=self.current_uri, error="invalid stream")
+
+        def reset(self) -> None:
+            """Reset all recorded state back to initial values."""
+            self.played_uris.clear()
+            self.is_playing = False
+            self.is_paused = False
+            self.current_uri = None
+
+
+# ---------------------------------------------------------------------------
 # OCPPlayerHarness
 # ---------------------------------------------------------------------------
 
@@ -311,6 +503,46 @@ class OCPPlayerHarness:
         self.gui: Optional[MagicMock] = None
         self._patches: list = []
 
+    def _mock_mode_event_reporter(self, backend, event: "PlaybackEvent", **data) -> None:
+        """Bound (curried via ``partial(self._mock_mode_event_reporter,
+        self.backend)``) onto the default v2 mock backend in mock-backend
+        mode, where ``audio_service`` is a ``MagicMock`` and can't do this
+        translation itself — a ``MagicMock``'s ``_handle_backend_event``
+        just records the call and emits nothing.
+
+        Reproduces the ``ovos.common_play.*`` wire translation the real
+        ``BaseMediaService._handle_backend_event`` performs for
+        ``END_OF_MEDIA``/``ERROR`` — the two events
+        ``simulate_track_end()``/``simulate_invalid_stream()`` drive — so
+        those stay meaningful in the default (no ``backend_factory``) mode
+        instead of silently no-oping. ``TRACK_START``/``PAUSED``/``RESUMED``/
+        ``STOPPED`` are not translated here: nothing in mock-backend mode
+        ever calls the backend's own ``play()``/``pause()``/``resume()``
+        (``audio_service`` being a ``MagicMock`` means the harness's own
+        control methods never reach them), and ``PAUSED``/``RESUMED``/
+        ``STOPPED`` would in any case only matter for the
+        ``on_external_event`` callback a real ``BaseMediaService`` wires,
+        which mock-backend mode never sets up.
+
+        Deliberately skips the two guards the real
+        ``_handle_backend_event`` applies — the currency check
+        (``backend is not self.current`` on the real service) and the
+        staleness check (a reported ``uri`` that disagrees with
+        ``self._current_uri``) — since neither concept exists without a
+        real ``BaseMediaService`` behind this branch. A test that reports an
+        event through this shim without a preceding ``play()``, or against
+        a stale/mismatched uri, will see it translated onto the wire here
+        even though the real daemon would drop it; write such a cell
+        against the real daemon (``backend_factory=...``) instead, not
+        against this shim.
+        """
+        if event == PlaybackEvent.END_OF_MEDIA:
+            self.bus.emit(Message("ovos.common_play.media.state",
+                                  {"state": MediaState.END_OF_MEDIA}))
+        elif event == PlaybackEvent.ERROR:
+            self.bus.emit(Message("ovos.common_play.media.state",
+                                  {"state": MediaState.INVALID_MEDIA}))
+
     def __enter__(self) -> "OCPPlayerHarness":
         """Start ``OCPMediaPlayer`` with mocked deps and inject ``MockOCPBackend``.
 
@@ -334,6 +566,14 @@ class OCPPlayerHarness:
                 self.backend.name = "test-backend"
             if not getattr(self.backend, "namespace", None):
                 self.backend.namespace = self.backend_namespace
+        elif _V2AudioPlayerBackend is not None:
+            # MediaBackend v2 is the default once installed — see
+            # MockOCPBackendV2's docstring for how it differs from the v1
+            # MockOCPBackend (still used as a fallback below, and still the
+            # right choice for unported plugins driven via backend_factory).
+            self.backend = MockOCPBackendV2(
+                config={}, bus=self.bus, namespace=self.backend_namespace
+            )
         else:
             self.backend = MockOCPBackend(
                 config={}, bus=self.bus, namespace=self.backend_namespace
@@ -387,7 +627,27 @@ class OCPPlayerHarness:
                 self.player.validate_stream = lambda: True
                 audio_svc.services = [self.backend]
                 audio_svc.default = self.backend
-                self.backend.set_track_start_callback(audio_svc.track_start)
+                if hasattr(self.backend, "bind_event_reporter"):
+                    # MediaBackend v2: load_services() (skipped here via
+                    # autoload=False) would normally bind every backend's
+                    # physical-event reporter to _handle_backend_event; a v2
+                    # backend that never gets played (or reports from a
+                    # side channel before its first play()) would otherwise
+                    # stay unbound and silently drop every report() call.
+                    self.backend.bind_event_reporter(
+                        partial(audio_svc._handle_backend_event, self.backend))
+                if hasattr(audio_svc, "track_start") and hasattr(
+                        self.backend, "set_track_start_callback"):
+                    # MediaBackend v1 only — v2 backends report TRACK_START
+                    # themselves via report()/bind_event_reporter above.
+                    # audio_svc is a real (non-mocked) BaseMediaService here:
+                    # the attribute that vanished going from v1 to v2 is
+                    # BaseMediaService.track_start itself, so that — not
+                    # anything on self.backend, which a v1 backend always
+                    # HAS regardless of which ovos-media build is installed
+                    # — is the one that actually raises AttributeError on a
+                    # v2 build if unguarded.
+                    self.backend.set_track_start_callback(audio_svc.track_start)
                 # load_services() (skipped with autoload=False) would register these.
                 # handle_play routed the per-namespace ovos.{ns}.service.play bus
                 # topic on builds that had it; newer ovos-media dropped that whole
@@ -400,9 +660,6 @@ class OCPPlayerHarness:
                 self.bus.on(f"ovos.{ns}.service.pause", audio_svc.pause)
                 self.bus.on(f"ovos.{ns}.service.resume", audio_svc.resume)
                 self.bus.on(f"ovos.{ns}.service.stop", audio_svc.stop)
-                # NB: BaseMediaService.__init__ already wired ovos.common_play.media.state
-                # -> handle_media_state_change; re-registering it would fire backend.play()
-                # twice, so it is deliberately omitted here.
                 audio_svc._loaded.set()
             else:
                 # Mock-backend mode: drive the player state-machine against the MagicMock
@@ -410,7 +667,20 @@ class OCPPlayerHarness:
                 audio_svc = self.player.audio_service
                 audio_svc.services = [self.backend]
                 audio_svc.default = self.backend
-                self.backend.set_track_start_callback(audio_svc.track_start)
+                if hasattr(self.backend, "bind_event_reporter"):
+                    # MediaBackend v2: audio_svc here is a MagicMock (no real
+                    # BaseMediaService behind it), so binding straight to its
+                    # _handle_backend_event would silently no-op every
+                    # report() — see _mock_mode_event_reporter's docstring.
+                    self.backend.bind_event_reporter(
+                        partial(self._mock_mode_event_reporter, self.backend))
+                if hasattr(self.backend, "set_track_start_callback"):
+                    # MediaBackend v1 only. audio_svc here is a MagicMock
+                    # (no real BaseMediaService behind it in this branch),
+                    # so hasattr(audio_svc, "track_start") is always True —
+                    # the discriminator that actually matters is whether
+                    # self.backend (a real, non-mocked instance) speaks v1.
+                    self.backend.set_track_start_callback(audio_svc.track_start)
                 # Register the audio service bus handlers manually
                 # (normally done inside BaseMediaService.load_services)
                 if hasattr(audio_svc, "handle_play"):
@@ -418,8 +688,10 @@ class OCPPlayerHarness:
                 self.bus.on(f"ovos.{ns}.service.pause", audio_svc.pause)
                 self.bus.on(f"ovos.{ns}.service.resume", audio_svc.resume)
                 self.bus.on(f"ovos.{ns}.service.stop", audio_svc.stop)
-                self.bus.on("ovos.common_play.media.state",
-                            audio_svc.handle_media_state_change)
+                # NB: v2 ovos-media dropped handle_media_state_change entirely
+                # (BaseMediaService._handle_backend_event, bound above, is the
+                # replacement — reached via the backend's own report() calls,
+                # not a bus subscription). Nothing to register here for it.
                 audio_svc._loaded.set()
 
             return self

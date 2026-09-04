@@ -1959,6 +1959,17 @@ except ImportError as e:
 # only needed by the *test* that uses it, not by ovoscope itself).
 from ovoscope.media_provider import MediaProviderHarness  # noqa: F401,E402
 
+# MediaBackend v2 plugin harness. ovos_plugin_manager.templates.media is a
+# new module that only exists on the unreleased feat/media-backend-v2
+# branch — a released ovos-plugin-manager does not have it yet. Unlike the
+# [media]-extra imports above, ovoscope.media_backend guards its own
+# templates.media import internally and only raises (a clear ImportError)
+# when MediaBackendHarness is actually constructed, not at module import
+# time — so this import is always safe and needs no try/except here.
+# TEMPORARY: once ovos-plugin-manager>=3.0.0a1 releases with the v2
+# template, it becomes an explicit dependency and this comment can go.
+from ovoscope.media_backend import MediaBackendHarness  # noqa: F401,E402
+
 try:
     from ovoscope.tts_intelligibility import (  # noqa: F401
         TTSIntelligibilityHarness,
