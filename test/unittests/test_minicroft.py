@@ -535,6 +535,19 @@ class RegistersAndTrainsSkill(OVOSSkill):
         self.bus.emit(Message("mycroft.skills.trained"))
 
 
+class StuckTrainerSkill(OVOSSkill):
+    """Subscribes a no-op handler to 'mycroft.skills.train' (so a trainer
+    is present on the bus) then registers an intent, exactly like
+    RegistersIntentSkill, but never emits 'mycroft.skills.trained' — used
+    to simulate a pipeline plugin that starts a training pass and never
+    finishes it."""
+
+    def initialize(self):
+        self.bus.on("mycroft.skills.train", lambda message: None)
+        self.bus.emit(Message("register_intent", {"name": "unittest.stub"},
+                              {"skill_id": self.skill_id}))
+
+
 class TestTrainedQuietWindow(unittest.TestCase):
 
     def setUp(self):
@@ -570,28 +583,36 @@ class TestTrainedQuietWindow(unittest.TestCase):
 
     @patch.dict("os.environ", {"OVOSCOPE_TRAINED_TIMEOUT": "0.3"})
     def test_never_trained_raises_naming_skill(self):
-        """An intent was registered but 'mycroft.skills.trained' never
+        """A trainer is subscribed to 'mycroft.skills.train' (StuckTrainerSkill)
+        and an intent was registered, but 'mycroft.skills.trained' never
         arrives within the bound -> get_minicroft must raise loudly, never
-        proceed silently as if it were READY and trained."""
+        proceed silently as if it were READY and trained. Booted on the
+        adapt pipeline so no padatious-family plugin can emit the reply
+        behind the test's back."""
         skill_id = "ovoscope-unittest-stuck.test"
         with self.assertRaises(RuntimeError) as ctx:
             get_minicroft([skill_id],
-                          extra_skills={skill_id: RegistersIntentSkill})
+                          extra_skills={skill_id: StuckTrainerSkill},
+                          default_pipeline=ADAPT_PIPELINE)
         self.assertIn(skill_id, str(ctx.exception))
         self.assertIn("mycroft.skills.trained", str(ctx.exception))
 
     @patch.dict("os.environ", {"OVOSCOPE_TRAINED_TIMEOUT": "0.3"})
     def test_never_trained_raises_naming_only_stuck_skill(self):
-        """A mixed load: one skill registers an intent and never gets
-        trained, another skill registers no intent at all. The raised
+        """A mixed load: one skill subscribes a trainer to
+        'mycroft.skills.train', registers an intent, and never gets
+        trained; another skill registers no intent at all. The raised
         error must name ONLY the stuck skill — an intentless skill loaded
-        alongside a hung trainer must never be blamed."""
+        alongside a hung trainer must never be blamed. Booted on the adapt
+        pipeline so no padatious-family plugin can emit the reply behind
+        the test's back."""
         stuck_id = "ovoscope-unittest-stuck-mixed.test"
         intentless_id = "ovoscope-unittest-intentless-mixed.test"
         with self.assertRaises(RuntimeError) as ctx:
             get_minicroft([stuck_id, intentless_id],
-                          extra_skills={stuck_id: RegistersIntentSkill,
-                                        intentless_id: PingSkill})
+                          extra_skills={stuck_id: StuckTrainerSkill,
+                                        intentless_id: PingSkill},
+                          default_pipeline=ADAPT_PIPELINE)
         message = str(ctx.exception)
         self.assertIn(stuck_id, message)
         self.assertNotIn(intentless_id, message)
@@ -606,6 +627,56 @@ class TestTrainedQuietWindow(unittest.TestCase):
         try:
             self.assertEqual(mc._registered_skill_ids, {skill_id})
             self.assertEqual(mc._trained_times, [])
+        finally:
+            mc.stop()
+
+    @patch.dict("os.environ", {"OVOSCOPE_TRAINED_TIMEOUT": "0.3"})
+    def test_no_trainer_subscribed_skips_wait(self):
+        """m2v registers intents but no plugin on the bus ever subscribes to
+        'mycroft.skills.train', so nothing will ever emit
+        'mycroft.skills.trained' -> get_minicroft must return at READY
+        instead of waiting out the bound and raising (OpenVoiceOS/ovoscope#179)."""
+        if not is_pipeline_available(M2V_PIPELINE):
+            raise unittest.SkipTest("ovos-m2v-pipeline plugin not installed")
+        skill_id = "ovoscope-unittest-m2v-no-trainer.test"
+        mc = get_minicroft([skill_id],
+                           extra_skills={skill_id: RegistersIntentSkill},
+                           default_pipeline=M2V_PIPELINE)
+        try:
+            self.assertEqual(mc._registered_skill_ids, {skill_id})
+            self.assertEqual(mc._trained_times, [])
+            self.assertEqual(mc.bus.ee.listeners("mycroft.skills.train"), [])
+        finally:
+            mc.stop()
+
+    @patch.dict("os.environ", {"OVOSCOPE_TRAINED_TIMEOUT": "0.3"})
+    def test_no_trainer_subscribed_skips_wait_adapt_only(self):
+        """Same as above with adapt, which is always installed, so this
+        regression is exercised in every run of the suite, never skipped."""
+        skill_id = "ovoscope-unittest-adapt-no-trainer.test"
+        mc = get_minicroft([skill_id],
+                           extra_skills={skill_id: RegistersIntentSkill},
+                           default_pipeline=ADAPT_PIPELINE)
+        try:
+            self.assertEqual(mc._registered_skill_ids, {skill_id})
+            self.assertEqual(mc._trained_times, [])
+            self.assertEqual(mc.bus.ee.listeners("mycroft.skills.train"), [])
+        finally:
+            mc.stop()
+
+    def test_lean_default_pipeline_has_a_trainer(self):
+        """Detection premise: the lean default (padacioso/padatious) does
+        subscribe to 'mycroft.skills.train'. If this ever stops holding,
+        the wait-skip logic above would start skipping every boot's wait
+        silently, so this must never regress unnoticed."""
+        skill_id = "ovoscope-unittest-lean-has-trainer.test"
+        pipeline = (LEAN_DEFAULT_PIPELINE
+                    if is_pipeline_available(LEAN_DEFAULT_PIPELINE)
+                    else LIGHT_TEST_PIPELINE)
+        mc = get_minicroft([skill_id], extra_skills={skill_id: PingSkill},
+                           default_pipeline=pipeline, wait_for_trained=False)
+        try:
+            self.assertTrue(mc.bus.ee.listeners("mycroft.skills.train"))
         finally:
             mc.stop()
 

@@ -117,20 +117,28 @@ croft = get_minicroft(["skill-weather.openvoiceos", "skill-timer.openvoiceos"])
 # croft.status.state == ProcessState.READY
 ```
 
-Loading skills only registers their intents; the pipeline plugin (Adapt,
-Padatious, ...) still has to compile them before matching is reliable. Once
-`READY`, `get_minicroft()` also waits for `mycroft.skills.trained` to go
-quiet — no new event for a short window — before returning, but only if a
-loaded skill actually registered an intent. Skills with nothing to train
-(pure event-handler skills, an empty `skill_ids`) skip the wait entirely,
-mirroring the pipeline plugin's own "nothing dirty, nothing to compile"
-check. If an intent was registered and training never completes within
-`OVOSCOPE_TRAINED_TIMEOUT` seconds (default: 180s when the `CI` environment
-variable is set, 5s otherwise), `get_minicroft()` raises `RuntimeError`
-naming only the skill(s) that registered an intent and never got a
-`mycroft.skills.trained` reply — a stuck trainer in one skill never blames
-an unrelated, intentless skill loaded alongside it. Pass
-`wait_for_trained=False` to opt out.
+Loading skills only registers their intents; a pipeline plugin still has to
+compile them before matching is reliable, and `mycroft.skills.trained` is
+that plugin's own private readiness signal — it is not a spec topic.
+Padatious, Padacioso, and Nebulento subscribe to `mycroft.skills.train` and
+reply with `mycroft.skills.trained` once compiling settles. Adapt and m2v
+register intents synchronously and never subscribe to
+`mycroft.skills.train`, so they never send that reply.
+
+Once `READY`, `get_minicroft()` waits for `mycroft.skills.trained` to go
+quiet — no new event for a short window — before returning, but only when
+both hold: a loaded skill actually registered an intent, and some pipeline
+plugin on the bus subscribes to `mycroft.skills.train`. Skills with nothing
+to train (pure event-handler skills, an empty `skill_ids`) skip the wait,
+and so does a boot whose pipeline has no such subscriber — for example
+`default_pipeline=M2V_PIPELINE` or an adapt-only pipeline — since nothing
+will ever report training done. If an intent was registered, a subscriber
+is present, and training never completes within `OVOSCOPE_TRAINED_TIMEOUT`
+seconds (default: 180s when the `CI` environment variable is set, 5s
+otherwise), `get_minicroft()` raises `RuntimeError` naming only the
+skill(s) that registered an intent and never got a `mycroft.skills.trained`
+reply — a stuck trainer in one skill never blames an unrelated, intentless
+skill loaded alongside it. Pass `wait_for_trained=False` to opt out.
 
 `get_minicroft()` also raises `RuntimeError` if any matcher id in the
 configured pipeline (see "Lean Default Pipeline" above) failed to load —
@@ -175,17 +183,19 @@ croft = get_minicroft(
 )
 ```
 
-When testing with N secondary languages, training overhead scales with the number of per-language containers — for example, a 17-locale suite may require 129 seconds for unconstrained training (on a system without resource limits). The default `OVOSCOPE_TRAINED_TIMEOUT` is tuned for single-language loads. For multilingual suites, pass an explicit `max_wait` value large enough to accommodate all language engines:
+When testing with N secondary languages, training overhead scales with the number of per-language containers — for example, a 17-locale suite may require 129 seconds for unconstrained training (on a system without resource limits). `max_wait` bounds only the wait for `READY`; it has no effect on the training wait that follows. The training wait is bounded by `OVOSCOPE_TRAINED_TIMEOUT`, and its default (180s under `CI`, 5s otherwise) is tuned for single-language loads. For multilingual suites, set `OVOSCOPE_TRAINED_TIMEOUT` large enough to accommodate all language engines, and raise `max_wait` too if reaching `READY` itself is slow with that many engines starting up:
 
 ```python
+import os
+os.environ["OVOSCOPE_TRAINED_TIMEOUT"] = "300"  # per-language training can be slow
 croft = get_minicroft(
     ["my-skill.openvoiceos"],
     secondary_langs=["en-US", "pt-PT", "de-DE", "es-ES", "fr-FR"],
-    max_wait=300,  # Per-language training can be slow; allow extra margin
+    max_wait=300,  # covers a slow READY, not training
 )
 ```
 
-The test suite itself can then settle to a quiet window using the same pattern `ovos-skill-alerts` uses for its multilingual fixtures: `max_wait=300 + settle passes` to ensure all per-language training completes before assertions run.
+The test suite itself can then settle to a quiet window using the same pattern `ovos-skill-alerts` uses for its multilingual fixtures: set `OVOSCOPE_TRAINED_TIMEOUT` with margin so all per-language training completes before assertions run.
 
 ---
 ## pytest-timeout Convention
