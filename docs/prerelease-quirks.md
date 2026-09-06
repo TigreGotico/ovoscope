@@ -5,6 +5,14 @@ reset at each stable release.
 
 ## next alpha
 
+- `get_minicroft()` skips the `mycroft.skills.trained` wait when no pipeline
+  plugin on the bus subscribes to `mycroft.skills.train` — the m2v and
+  adapt pipelines register intents synchronously and never send that
+  reply, so a boot using only those (`default_pipeline=M2V_PIPELINE`, or
+  adapt-only) used to wait out the full `OVOSCOPE_TRAINED_TIMEOUT` and
+  raise `RuntimeError` no matter how large the timeout. It now returns at
+  `READY` in that case. See [OpenVoiceOS/ovoscope#179](https://github.com/OpenVoiceOS/ovoscope/issues/179)
+  and [docs/minicroft.md](minicroft.md#factory-get_minicroft).
 - `get_minicroft()` now waits for `mycroft.skills.trained` to go quiet after
   `READY`, but only when a loaded skill actually registered an intent
   (mirrors the pipeline plugin's own `needs_compile` gate). If training

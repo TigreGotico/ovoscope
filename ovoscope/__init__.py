@@ -1141,10 +1141,16 @@ def get_minicroft(skill_ids: Union[List[str], str], *args,
 
     Once READY, and unless ``wait_for_trained=False``, this also waits for
     "mycroft.skills.trained" to go quiet (no new event for
-    ``TRAINED_QUIET_WINDOW`` seconds) before returning — but only if a loaded
-    skill actually registered an intent (``register_intent`` /
-    ``padatious:register_intent``), mirroring padatious' own
-    ``needs_compile`` gate: nothing to train means nothing to wait for.
+    ``TRAINED_QUIET_WINDOW`` seconds) before returning — but only if both
+    hold: a loaded skill actually registered an intent (``register_intent``
+    / ``padatious:register_intent``), and a pipeline plugin on the bus
+    subscribes to "mycroft.skills.train". "mycroft.skills.trained" is not a
+    spec topic; it is a private readiness signal emitted by the
+    padatious/padacioso/nebulento family in reply to that subscription. The
+    m2v and adapt pipelines register intents synchronously and never
+    subscribe to "mycroft.skills.train", so they never emit the reply — a
+    boot using only those engines is fully loaded at READY and returns
+    immediately, with no wait.
 
     Timeout behavior: On timeout waiting for training, get_minicroft's
     exception handler calls croft.stop(), which stops the MiniCroft process and
@@ -1166,7 +1172,8 @@ def get_minicroft(skill_ids: Union[List[str], str], *args,
 
     Raises:
         TimeoutError: If MiniCroft does not reach READY within ``max_wait`` seconds.
-        RuntimeError: If a loaded skill registered intents but
+        RuntimeError: If a loaded skill registered intents, a pipeline
+            plugin subscribes to "mycroft.skills.train", and
             "mycroft.skills.trained" never arrives within
             ``OVOSCOPE_TRAINED_TIMEOUT`` seconds, OR if any pipeline id in
             the configured pipeline (the lean default, an
@@ -1206,7 +1213,15 @@ def get_minicroft(skill_ids: Union[List[str], str], *args,
 
         with croft._training_lock:
             registered = set(croft._registered_skill_ids)
-        if wait_for_trained and registered:
+        has_trainer = bool(croft.bus.ee.listeners("mycroft.skills.train"))
+        if registered and not has_trainer:
+            LOG.debug(
+                "MiniCroft: skill(s) registered intents but no pipeline "
+                "plugin on the bus subscribes to 'mycroft.skills.train' "
+                f"(skill_ids={sorted(registered)}) — nothing will report "
+                "training done, skipping the trained wait"
+            )
+        if wait_for_trained and registered and has_trainer:
             timeout = float(os.environ.get("OVOSCOPE_TRAINED_TIMEOUT",
                                             _DEFAULT_TRAINED_TIMEOUT))
             trained_deadline = time() + timeout
