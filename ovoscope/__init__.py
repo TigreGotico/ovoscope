@@ -101,6 +101,18 @@ M2V_PIPELINE = [
     "ovos-m2v-pipeline-medium",
     "ovos-m2v-pipeline-low",
 ]
+# The model2vec classifier that ovos-m2v-pipeline loads. This multilingual
+# checkpoint is the candidate default intent engine: one shared 128M
+# potion-multilingual embedding model plus a trained head over the fleet's
+# `<skill_id>:<intent_name>` labels, so a single boot routes localized input
+# for any loaded skill. Pass a different repo/path to get_m2v_minicroft when
+# testing another checkpoint.
+M2V_MULTILINGUAL_MODEL = "OpenVoiceOS/ovos-m2v-intents-multi-128M-v5"
+# Config key ovos-m2v-pipeline reads under Configuration()["intents"]. Note the
+# underscores: the pipeline id in a pipeline list is "ovos-m2v-pipeline" (with
+# tier suffixes -high/-medium/-low), but the config section is keyed with
+# underscores, matching the plugin's own Configuration lookup.
+M2V_CONFIG_KEY = "ovos_m2v_pipeline"
 # Nebulento — fuzzy intent matching (ConfidenceMatcherPipeline). Single OPM
 # entry point; the pipeline manager handles confidence-tier routing.
 NEBULENTO_PIPELINE = ["ovos-nebulento-pipeline-plugin"]
@@ -1248,6 +1260,71 @@ def get_minicroft(skill_ids: Union[List[str], str], *args,
         # them skip cleanup and leak the started MiniCroft process.
         croft.stop()
         raise
+
+
+def get_m2v_minicroft(skill_ids: Union[List[str], str],
+                      model: str = M2V_MULTILINGUAL_MODEL,
+                      conf_high: float = 0.7,
+                      conf_medium: float = 0.5,
+                      conf_low: float = 0.15,
+                      ignore_intents: Optional[List[str]] = None,
+                      lang: Optional[str] = None,
+                      secondary_langs: Optional[List[str]] = None,
+                      extra_pipeline_config: Optional[Dict[str, Any]] = None,
+                      max_wait: float = 300,
+                      wait_for_trained: bool = False,
+                      **kwargs) -> MiniCroft:
+    """Boot a MiniCroft whose only intent stage is the model2vec classifier.
+
+    This is the reusable entry point for routing a skill's golden/e2e
+    utterances through the candidate default engine. The classifier syncs the
+    loaded skills' registered `<skill_id>:<intent_name>` labels at runtime and
+    only matches labels that are both in the trained model and currently
+    loaded, so a single boot exercises real localized routing for any skill.
+
+    The model downloads to the shared HuggingFace cache on first use (~512MB
+    for the multilingual checkpoint), so the default ``max_wait`` is generous.
+
+    Args:
+        skill_ids: One or more skill plugin IDs to load.
+        model: HuggingFace repo id or local path of the model2vec classifier
+            pipeline. Defaults to the multilingual candidate default engine.
+        conf_high/conf_medium/conf_low: Confidence thresholds for the
+            high/medium/low pipeline tiers.
+        ignore_intents: Intent labels the classifier must never emit.
+        lang: Primary language tag (e.g. "en-US"). A multilingual model routes
+            other languages regardless; set this to the utterance's language
+            for correct dialog rendering.
+        secondary_langs: Extra languages to load skill resources for.
+        extra_pipeline_config: Merged into the ovos_m2v_pipeline config section
+            (e.g. {"renormalize": False, "mode": "classifier"}).
+        max_wait: Seconds to wait for READY (covers first-run model download).
+        wait_for_trained: Defaults False — the classifier head is frozen at
+            training time and never emits "mycroft.skills.trained", so the
+            training-quiet wait would always time out. Leave False for the
+            classifier; set True only for a prototype-mode model that trains.
+
+    Returns:
+        A started, READY MiniCroft booted with the M2V_PIPELINE tiers.
+    """
+    m2v_cfg: Dict[str, Any] = {
+        "model": model,
+        "conf_high": conf_high,
+        "conf_medium": conf_medium,
+        "conf_low": conf_low,
+        "ignore_intents": ignore_intents or [],
+    }
+    if extra_pipeline_config:
+        m2v_cfg.update(extra_pipeline_config)
+    pipeline_config = {M2V_CONFIG_KEY: m2v_cfg}
+    return get_minicroft(skill_ids,
+                         default_pipeline=M2V_PIPELINE,
+                         pipeline_config=pipeline_config,
+                         lang=lang,
+                         secondary_langs=secondary_langs,
+                         max_wait=max_wait,
+                         wait_for_trained=wait_for_trained,
+                         **kwargs)
 
 
 @dataclasses.dataclass()
