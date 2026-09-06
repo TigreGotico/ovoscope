@@ -134,8 +134,7 @@ and so does a boot whose pipeline has no such subscriber — for example
 `default_pipeline=M2V_PIPELINE` or an adapt-only pipeline — since nothing
 will ever report training done. If an intent was registered, a subscriber
 is present, and training never completes within `OVOSCOPE_TRAINED_TIMEOUT`
-seconds (default: 180s when the `CI` environment variable is set, 5s
-otherwise), `get_minicroft()` raises `RuntimeError` naming only the
+seconds (default: 180s), `get_minicroft()` raises `RuntimeError` naming only the
 skill(s) that registered an intent and never got a `mycroft.skills.trained`
 reply — a stuck trainer in one skill never blames an unrelated, intentless
 skill loaded alongside it. Pass `wait_for_trained=False` to opt out.
@@ -183,7 +182,7 @@ croft = get_minicroft(
 )
 ```
 
-When testing with N secondary languages, training overhead scales with the number of per-language containers — for example, a 17-locale suite may require 129 seconds for unconstrained training (on a system without resource limits). `max_wait` bounds only the wait for `READY`; it has no effect on the training wait that follows. The training wait is bounded by `OVOSCOPE_TRAINED_TIMEOUT`, and its default (180s under `CI`, 5s otherwise) is tuned for single-language loads. For multilingual suites, set `OVOSCOPE_TRAINED_TIMEOUT` large enough to accommodate all language engines, and raise `max_wait` too if reaching `READY` itself is slow with that many engines starting up:
+When testing with N secondary languages, training overhead scales with the number of per-language containers — for example, a 17-locale suite may require 129 seconds for unconstrained training (on a system without resource limits). `max_wait` bounds only the wait for `READY`; it has no effect on the training wait that follows. The training wait is bounded by `OVOSCOPE_TRAINED_TIMEOUT`, and its default of 180s is tuned for single-language loads. For multilingual suites, set `OVOSCOPE_TRAINED_TIMEOUT` large enough to accommodate all language engines, and raise `max_wait` too if reaching `READY` itself is slow with that many engines starting up:
 
 ```python
 import os

@@ -182,6 +182,7 @@ LEAN_DEFAULT_PIPELINE = [
     "ovos-padacioso-pipeline-plugin-medium",
     "ovos-fallback-pipeline-plugin-high",
     "ovos-fallback-pipeline-plugin-medium",
+    "ovos-fallback-pipeline-plugin-low",
 ]
 
 # Standard test pipeline — all standard built-in stages.
@@ -1182,18 +1183,20 @@ class MiniCroft(SkillManager):
 # for).
 TRAINED_QUIET_WINDOW = 0.5
 
-# The overall bound on the trained-wait is env-tunable so CI (slower, cold
-# caches, contended runners) gets a generous default while local runs stay
-# tight. Presence of the CI env var (not its value) selects the default.
-# CI default is 180s: worst-case uninstrumented on taskset-2 was 16.8s, but
-# fleet CI jobs run under coverage instrumentation on throttled 2-core shared
-# VMs where a large single-skill intent set exceeded 60s in the field (weather:
-# 262 trained-timeout failures at 60s; the alerts multilang fixture
-# independently documents "under coverage instrumentation, booting reliably
-# needs more than 60s"). 180s serves the real condition, costs nothing on
-# healthy boots (quiet-window return), and the loud never-trained guard still
-# fires.
-_DEFAULT_TRAINED_TIMEOUT = 180.0 if os.environ.get("CI") else 5.0
+# The overall bound on the trained-wait is env-tunable, but the default
+# itself must be generous everywhere, not just under a CI env var: a 5s
+# local default is shorter than plenty of real skills' training time, and a
+# timeout here doesn't just fail the current test — it raises out of
+# setUpClass, skipping tearDownClass, which leaves class-level monkeypatches
+# and MiniCroft state leaked into later, unrelated test files. 180s: worst-case
+# uninstrumented on taskset-2 was 16.8s, but fleet CI jobs run under coverage
+# instrumentation on throttled 2-core shared VMs where a large single-skill
+# intent set exceeded 60s in the field (weather: 262 trained-timeout failures
+# at 60s; the alerts multilang fixture independently documents "under coverage
+# instrumentation, booting reliably needs more than 60s"). 180s serves the
+# real condition, costs nothing on healthy boots (quiet-window return), and
+# the loud never-trained guard still fires.
+_DEFAULT_TRAINED_TIMEOUT = 180.0
 
 
 def get_minicroft(skill_ids: Union[List[str], str], *args,
