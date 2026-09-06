@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.7.1a1](https://github.com/OpenVoiceOS/ovoscope/tree/1.7.1a1) (2026-09-06)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/1.7.0a2...1.7.1a1)
+
+**Merged pull requests:**
+
+- fix: skip the trained wait when no pipeline plugin trains [\#180](https://github.com/OpenVoiceOS/ovoscope/pull/180) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [1.7.0a2](https://github.com/OpenVoiceOS/ovoscope/tree/1.7.0a2) (2026-09-05)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/1.7.0a1...1.7.0a2)
@@ -236,6 +244,374 @@
 **Merged pull requests:**
 
 - feat: per-clip WakeWordProbe for benchmark/test harnesses [\#97](https://github.com/OpenVoiceOS/ovoscope/pull/97) ([JarbasAl](https://github.com/JarbasAl))
+
+## [1.5.0](https://github.com/OpenVoiceOS/ovoscope/tree/1.5.0) (2026-07-02)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/1.5.0a1...1.5.0)
+
+## [1.5.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/1.5.0a1) (2026-07-02)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/1.4.0a1...1.5.0a1)
+
+**Merged pull requests:**
+
+- feat: add a pipeline\_id filter to End2EndTest [\#112](https://github.com/OpenVoiceOS/ovoscope/pull/112) ([JarbasAl](https://github.com/JarbasAl))
+
+## [1.4.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/1.4.0a1) (2026-06-29)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/1.3.0a1...1.4.0a1)
+
+**Merged pull requests:**
+
+- feat: skill\_id lifecycle filter + eof\_count for End2EndTest [\#110](https://github.com/OpenVoiceOS/ovoscope/pull/110) ([JarbasAl](https://github.com/JarbasAl))
+
+## [1.3.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/1.3.0a1) (2026-06-29)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/1.2.0a1...1.3.0a1)
+
+**Merged pull requests:**
+
+- feat: emit recognizer\_loop:audio\_output\_start in \_mock\_tts alongside audio\_output\_end [\#108](https://github.com/OpenVoiceOS/ovoscope/pull/108) ([JarbasAl](https://github.com/JarbasAl))
+
+## [1.2.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/1.2.0a1) (2026-06-29)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/1.1.0a2...1.2.0a1)
+
+**Merged pull requests:**
+
+- feat: MockTTS publishes audio\_output\_end via the full bus \(faithful\) [\#106](https://github.com/OpenVoiceOS/ovoscope/pull/106) ([JarbasAl](https://github.com/JarbasAl))
+
+## [1.1.0a2](https://github.com/OpenVoiceOS/ovoscope/tree/1.1.0a2) (2026-06-29)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/1.1.0a1...1.1.0a2)
+
+**Merged pull requests:**
+
+- docs: clarify MockTTS bus.ee.emit rationale [\#104](https://github.com/OpenVoiceOS/ovoscope/pull/104) ([JarbasAl](https://github.com/JarbasAl))
+
+## [1.1.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/1.1.0a1) (2026-06-29)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/1.0.2a1...1.1.0a1)
+
+**Merged pull requests:**
+
+- feat: MockTTS — emit audio\_output\_end on delay for speak\_dialog\(wait=True\) [\#102](https://github.com/OpenVoiceOS/ovoscope/pull/102) ([JarbasAl](https://github.com/JarbasAl))
+
+## [1.0.2a1](https://github.com/OpenVoiceOS/ovoscope/tree/1.0.2a1) (2026-06-27)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/1.0.1a1...1.0.2a1)
+
+**Merged pull requests:**
+
+- fix: MockTTS destructor must not stop the shared playback thread [\#100](https://github.com/OpenVoiceOS/ovoscope/pull/100) ([JarbasAl](https://github.com/JarbasAl))
+
+## [1.0.1a1](https://github.com/OpenVoiceOS/ovoscope/tree/1.0.1a1) (2026-06-27)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/1.0.0a1...1.0.1a1)
+
+**Merged pull requests:**
+
+- fix: guard None blacklisted\_skills/intents in final-session check [\#98](https://github.com/OpenVoiceOS/ovoscope/pull/98) ([JarbasAl](https://github.com/JarbasAl))
+
+## [1.0.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/1.0.0a1) (2026-06-25)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.22.1a1...1.0.0a1)
+
+**Breaking changes:**
+
+- feat!: audio harness on OVOS spec bus namespace [\#92](https://github.com/OpenVoiceOS/ovoscope/pull/92) ([JarbasAl](https://github.com/JarbasAl))
+
+## [0.22.1a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.22.1a1) (2026-06-25)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.22.0a1...0.22.1a1)
+
+**Merged pull requests:**
+
+- fix: pytest 9 compatibility for the pytest11 plugin [\#88](https://github.com/OpenVoiceOS/ovoscope/pull/88) ([JarbasAl](https://github.com/JarbasAl))
+
+## [0.22.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.22.0a1) (2026-06-25)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.21.1a1...0.22.0a1)
+
+**Merged pull requests:**
+
+- feat: stream audio frames through MiniListener for multi-frame decoders [\#86](https://github.com/OpenVoiceOS/ovoscope/pull/86) ([JarbasAl](https://github.com/JarbasAl))
+
+## [0.21.1a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.21.1a1) (2026-06-25)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.21.0a1...0.21.1a1)
+
+**Merged pull requests:**
+
+- fix: repair ovoscope record in-process path \(default\_pipeline kwarg + from\_message skill\_ids\) [\#85](https://github.com/OpenVoiceOS/ovoscope/pull/85) ([JarbasAl](https://github.com/JarbasAl))
+
+## [0.21.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.21.0a1) (2026-06-25)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.20.0a1...0.21.0a1)
+
+**Merged pull requests:**
+
+- feat: export ovos-media OCP harness from the package + add \[media\] extra [\#89](https://github.com/OpenVoiceOS/ovoscope/pull/89) ([JarbasAl](https://github.com/JarbasAl))
+
+## [0.20.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.20.0a1) (2026-06-24)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.19.4a1...0.20.0a1)
+
+**Merged pull requests:**
+
+- feat: assert\_template\_shown for SYSTEM\_\* GUI templates [\#83](https://github.com/OpenVoiceOS/ovoscope/pull/83) ([JarbasAl](https://github.com/JarbasAl))
+
+## [0.19.4a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.19.4a1) (2026-06-17)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.19.3a1...0.19.4a1)
+
+**Merged pull requests:**
+
+- fix\(tts-intelligibility\): normalise rendered audio to 16kHz mono before STT [\#81](https://github.com/OpenVoiceOS/ovoscope/pull/81) ([JarbasAl](https://github.com/JarbasAl))
+
+## [0.19.3a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.19.3a1) (2026-06-17)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.19.2a1...0.19.3a1)
+
+**Merged pull requests:**
+
+- fix\(tts-intelligibility\): transcode non-WAV engine output before scoring [\#79](https://github.com/OpenVoiceOS/ovoscope/pull/79) ([JarbasAl](https://github.com/JarbasAl))
+
+## [0.19.2a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.19.2a1) (2026-06-16)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.19.1a2...0.19.2a1)
+
+**Merged pull requests:**
+
+- fix\(tts-intelligibility\): score synthesis failures as total miss, not abort [\#77](https://github.com/OpenVoiceOS/ovoscope/pull/77) ([JarbasAl](https://github.com/JarbasAl))
+
+## [0.19.1a2](https://github.com/OpenVoiceOS/ovoscope/tree/0.19.1a2) (2026-06-15)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.19.1a1...0.19.1a2)
+
+**Merged pull requests:**
+
+- feat: TTS end-to-end intelligibility harness [\#75](https://github.com/OpenVoiceOS/ovoscope/pull/75) ([JarbasAl](https://github.com/JarbasAl))
+
+## [0.19.1a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.19.1a1) (2026-06-14)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.19.0a3...0.19.1a1)
+
+## [0.19.0a3](https://github.com/OpenVoiceOS/ovoscope/tree/0.19.0a3) (2026-06-13)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.19.0a2...0.19.0a3)
+
+## [0.19.0a2](https://github.com/OpenVoiceOS/ovoscope/tree/0.19.0a2) (2026-06-13)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.19.0a1...0.19.0a2)
+
+## [0.19.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.19.0a1) (2026-06-12)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.18.0a1...0.19.0a1)
+
+## [0.18.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.18.0a1) (2026-06-10)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.17.1a1...0.18.0a1)
+
+## [0.17.1a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.17.1a1) (2026-05-20)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.17.0a1...0.17.1a1)
+
+## [0.17.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.17.0a1) (2026-05-14)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.16.0a1...0.17.0a1)
+
+## [0.16.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.16.0a1) (2026-05-14)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.15.0a1...0.16.0a1)
+
+## [0.15.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.15.0a1) (2026-05-14)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.14.0a1...0.15.0a1)
+
+## [0.14.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.14.0a1) (2026-05-14)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.13.1...0.14.0a1)
+
+## [0.13.1](https://github.com/OpenVoiceOS/ovoscope/tree/0.13.1) (2026-03-14)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.13.1a1...0.13.1)
+
+## [0.13.1a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.13.1a1) (2026-03-14)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.13.0...0.13.1a1)
+
+## [0.13.0](https://github.com/OpenVoiceOS/ovoscope/tree/0.13.0) (2026-03-13)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.13.0a1...0.13.0)
+
+## [0.13.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.13.0a1) (2026-03-13)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.12.0a1...0.13.0a1)
+
+## [0.12.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.12.0a1) (2026-03-12)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.11.0a1...0.12.0a1)
+
+## [0.11.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.11.0a1) (2026-03-11)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.10.0...0.11.0a1)
+
+## [0.10.0](https://github.com/OpenVoiceOS/ovoscope/tree/0.10.0) (2026-03-11)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.10.0a1...0.10.0)
+
+## [0.10.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.10.0a1) (2026-03-11)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.9.2...0.10.0a1)
+
+## [0.9.2](https://github.com/OpenVoiceOS/ovoscope/tree/0.9.2) (2026-03-10)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.9.2a4...0.9.2)
+
+## [0.9.2a4](https://github.com/OpenVoiceOS/ovoscope/tree/0.9.2a4) (2026-03-10)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.9.2a3...0.9.2a4)
+
+## [0.9.2a3](https://github.com/OpenVoiceOS/ovoscope/tree/0.9.2a3) (2026-03-10)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.9.2a2...0.9.2a3)
+
+## [0.9.2a2](https://github.com/OpenVoiceOS/ovoscope/tree/0.9.2a2) (2026-03-10)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.9.2a1...0.9.2a2)
+
+## [0.9.2a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.9.2a1) (2026-03-10)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.9.1...0.9.2a1)
+
+## [0.9.1](https://github.com/OpenVoiceOS/ovoscope/tree/0.9.1) (2026-03-10)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.9.1a2...0.9.1)
+
+## [0.9.1a2](https://github.com/OpenVoiceOS/ovoscope/tree/0.9.1a2) (2026-03-10)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.9.1a1...0.9.1a2)
+
+## [0.9.1a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.9.1a1) (2026-03-10)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.9.0a1...0.9.1a1)
+
+## [0.9.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.9.0a1) (2026-03-10)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.7.2...0.9.0a1)
+
+## [0.7.2](https://github.com/OpenVoiceOS/ovoscope/tree/0.7.2) (2025-06-17)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.7.2a1...0.7.2)
+
+## [0.7.2a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.7.2a1) (2025-06-17)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.7.1...0.7.2a1)
+
+## [0.7.1](https://github.com/OpenVoiceOS/ovoscope/tree/0.7.1) (2025-06-16)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.7.1a1...0.7.1)
+
+## [0.7.1a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.7.1a1) (2025-06-16)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.7.0...0.7.1a1)
+
+## [0.7.0](https://github.com/OpenVoiceOS/ovoscope/tree/0.7.0) (2025-06-16)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.7.0a2...0.7.0)
+
+## [0.7.0a2](https://github.com/OpenVoiceOS/ovoscope/tree/0.7.0a2) (2025-06-16)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.7.0a1...0.7.0a2)
+
+## [0.7.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.7.0a1) (2025-06-16)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.6.0...0.7.0a1)
+
+## [0.6.0](https://github.com/OpenVoiceOS/ovoscope/tree/0.6.0) (2025-06-15)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.6.0a1...0.6.0)
+
+## [0.6.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.6.0a1) (2025-06-15)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.5.1...0.6.0a1)
+
+## [0.5.1](https://github.com/OpenVoiceOS/ovoscope/tree/0.5.1) (2025-06-10)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.5.1a1...0.5.1)
+
+## [0.5.1a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.5.1a1) (2025-06-10)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.5.0...0.5.1a1)
+
+## [0.5.0](https://github.com/OpenVoiceOS/ovoscope/tree/0.5.0) (2025-06-10)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.5.0a1...0.5.0)
+
+## [0.5.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.5.0a1) (2025-06-10)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.4.0...0.5.0a1)
+
+## [0.4.0](https://github.com/OpenVoiceOS/ovoscope/tree/0.4.0) (2025-06-09)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.4.0a1...0.4.0)
+
+## [0.4.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.4.0a1) (2025-06-09)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.3.2...0.4.0a1)
+
+## [0.3.2](https://github.com/OpenVoiceOS/ovoscope/tree/0.3.2) (2025-06-09)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.3.2a1...0.3.2)
+
+## [0.3.2a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.3.2a1) (2025-06-09)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.3.1...0.3.2a1)
+
+## [0.3.1](https://github.com/OpenVoiceOS/ovoscope/tree/0.3.1) (2025-06-09)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.3.1a1...0.3.1)
+
+## [0.3.1a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.3.1a1) (2025-06-09)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.3.0...0.3.1a1)
+
+## [0.3.0](https://github.com/OpenVoiceOS/ovoscope/tree/0.3.0) (2025-06-09)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.3.0a1...0.3.0)
+
+## [0.3.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.3.0a1) (2025-06-09)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.2.0...0.3.0a1)
+
+## [0.2.0](https://github.com/OpenVoiceOS/ovoscope/tree/0.2.0) (2025-06-09)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.2.0a1...0.2.0)
+
+## [0.2.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.2.0a1) (2025-06-09)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.1.1...0.2.0a1)
+
+## [0.1.1](https://github.com/OpenVoiceOS/ovoscope/tree/0.1.1) (2025-06-09)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.1.1a1...0.1.1)
+
+## [0.1.1a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.1.1a1) (2025-06-09)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.1.0...0.1.1a1)
+
+## [0.1.0](https://github.com/OpenVoiceOS/ovoscope/tree/0.1.0) (2025-06-09)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.1.0a1...0.1.0)
+
+## [0.1.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.1.0a1) (2025-06-09)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.0.1...0.1.0a1)
+
+## [0.0.1](https://github.com/OpenVoiceOS/ovoscope/tree/0.0.1) (2025-06-09)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/d3280aba59b5ca8937f7ac9d562d1616f36dab98...0.0.1)
 
 
 
