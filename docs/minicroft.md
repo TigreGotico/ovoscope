@@ -224,6 +224,42 @@ croft = get_minicroft(
 All overrides are restored to their original values in `MiniCroft.stop()`.
 
 ---
+## m2v Boot Mode
+
+`get_m2v_minicroft(skill_ids, ...)` boots a `MiniCroft` that routes intents
+through model2vec. With its default `prototype=True` it boots two model2vec
+stages side by side, via `M2V_DUAL_PIPELINE`: the classifier, for the labels
+a trained checkpoint carries, and prototype mode, built at boot time from
+whatever skills load, straight from their shipped `.intent` files, for every
+other label. The classifier is confidently wrong on a label it never saw —
+it always answers with its best guess among the labels it knows — while
+prototype mode cannot fire on a label it has been denied. The prototype
+stage therefore deny-lists the classifier's own label set, read from the
+model's `config.json` via `m2v_model_labels()` rather than hard-coded, so
+each label is served by exactly one engine, and prototype mode runs ahead of
+the classifier at every confidence tier so it wins the one case where both
+engines could otherwise answer. `get_m2v_minicroft` calls
+`assert_m2v_label_split(mc)` before returning and raises `RuntimeError`
+naming any label caught in both engines or in neither. Pass `prototype=False`
+to boot the classifier alone via `M2V_PIPELINE`.
+
+The classifier's `conf_high`/`conf_medium`/`conf_low` (0.7/0.5/0.15) are
+calibrated for its softmax probabilities. Prototype mode scores raw cosine
+similarity instead, so those defaults are never copied into its config;
+`prototype_conf_high`/`prototype_conf_medium`/`prototype_conf_low` set the
+prototype stage's own tiers explicitly, and leaving them unset keeps the
+prototype plugin's own defaults.
+
+```python
+from ovoscope import get_m2v_minicroft, M2V_DUAL_PIPELINE
+
+croft = get_m2v_minicroft(["my-skill.openvoiceos"], lang="en-US")
+# croft.pipeline == M2V_DUAL_PIPELINE
+# croft.intents.pipeline_plugins["ovos-m2v-pipeline"] -> the classifier
+# croft.intents.pipeline_plugins["ovos-m2v-prototype-pipeline"] -> prototype mode
+```
+
+---
 ## Boot Sequence
 On startup, MiniCroft captures all messages emitted during skill loading into `boot_messages`. These can be asserted in `End2EndTest.expected_boot_sequence`. The typical boot sequence includes:
 1. `mycroft.skills.train`: intent pipeline training request

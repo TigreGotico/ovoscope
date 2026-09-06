@@ -5,6 +5,13 @@ reset at each stable release.
 
 ## next alpha
 
+- `get_m2v_minicroft()` now boots the model2vec classifier and model2vec
+  prototype mode side by side by default (`prototype=True`), via the new
+  `M2V_DUAL_PIPELINE`, so a skill's labels route whether or not they are in
+  the trained checkpoint; pass `prototype=False` for the classifier-only
+  behavior. `assert_m2v_label_split()` is a new public check callable on any
+  booted dual-mode `MiniCroft`. See
+  [docs/minicroft.md](minicroft.md#m2v-boot-mode).
 - `get_minicroft()` skips the `mycroft.skills.trained` wait when no pipeline
   plugin on the bus subscribes to `mycroft.skills.train` — the m2v and
   adapt pipelines register intents synchronously and never send that
