@@ -101,6 +101,54 @@ M2V_PIPELINE = [
     "ovos-m2v-pipeline-medium",
     "ovos-m2v-pipeline-low",
 ]
+# The model2vec classifier that ovos-m2v-pipeline loads. This multilingual
+# checkpoint is the candidate default intent engine: one shared 128M
+# potion-multilingual embedding model plus a trained head over the fleet's
+# `<skill_id>:<intent_name>` labels, so a single boot routes localized input
+# for any loaded skill. Pass a different repo/path to get_m2v_minicroft when
+# testing another checkpoint.
+M2V_MULTILINGUAL_MODEL = "OpenVoiceOS/ovos-m2v-intents-multi-128M-v5"
+# Config key ovos-m2v-pipeline reads under Configuration()["intents"]. Note the
+# underscores: the pipeline id in a pipeline list is "ovos-m2v-pipeline" (with
+# tier suffixes -high/-medium/-low), but the config section is keyed with
+# underscores, matching the plugin's own Configuration lookup.
+M2V_CONFIG_KEY = "ovos_m2v_pipeline"
+# Config key ovos-m2v-prototype-pipeline reads under Configuration()["intents"].
+# Same plugin family as M2V_CONFIG_KEY, forced into prototype mode, kept under
+# its own section so classifier and prototype settings never collide. Unlike
+# M2V_CONFIG_KEY this MUST be the dash form: OVOSPipelineFactory.load_plugin
+# resolves a plugin's config from Configuration()["intents"][<dash-form
+# plugin id>] and always passes that lookup's result (even an empty dict) to
+# the plugin's constructor; Model2VecPrototypePipeline only falls back to its
+# own Configuration() lookup (which does use the underscore form) when the
+# constructor receives literally ``None``, which the factory never passes.
+M2V_PROTOTYPE_CONFIG_KEY = "ovos-m2v-prototype-pipeline"
+# Dual m2v boot mode: the model2vec classifier and model2vec prototype mode
+# side by side, plus stop/converse/fallback. The classifier only ever routes
+# labels the checkpoint was trained on; prototype mode is built at boot time
+# from whatever skills load, straight from their shipped .intent files, and
+# deny-lists the classifier's own label set so each label has exactly one
+# engine. Prototype comes first in every tier: the classifier is confidently
+# wrong on a label it never saw (it will happily emit its best guess among
+# the labels it knows), while prototype mode cannot fire on the classifier's
+# labels once they are denied to it — so the only real contention is the
+# cross-label case where a skill's label was in the training set at some
+# point but is no longer, and prototype mode must win that case rather than
+# have the stale classifier answer intercept it first.
+M2V_DUAL_PIPELINE = [
+    "ovos-stop-pipeline-plugin-high",
+    "ovos-converse-pipeline-plugin",
+    "ovos-m2v-prototype-pipeline-high",
+    "ovos-m2v-pipeline-high",
+    "ovos-fallback-pipeline-plugin-high",
+    "ovos-stop-pipeline-plugin-medium",
+    "ovos-m2v-prototype-pipeline-medium",
+    "ovos-m2v-pipeline-medium",
+    "ovos-fallback-pipeline-plugin-medium",
+    "ovos-m2v-prototype-pipeline-low",
+    "ovos-m2v-pipeline-low",
+    "ovos-fallback-pipeline-plugin-low",
+]
 # Nebulento — fuzzy intent matching (ConfidenceMatcherPipeline). Single OPM
 # entry point; the pipeline manager handles confidence-tier routing.
 NEBULENTO_PIPELINE = ["ovos-nebulento-pipeline-plugin"]
@@ -757,6 +805,15 @@ class MiniCroft(SkillManager):
         # trained instead of every skill_id passed to get_minicroft (a
         # 5-skill load with one hung trainer must not blame the other 4).
         self._registered_skill_ids: set = set()
+        # Every `<skill_id>:<intent_name>` label seen on register_intent /
+        # padatious:register_intent, independent of any pipeline plugin's own
+        # ignore-list filtering. This is the ground truth "what did the
+        # loaded skills actually ask to be routed" set that
+        # assert_m2v_label_split checks the classifier+prototype split
+        # against — an engine's own `.intents` view already has ignored
+        # labels filtered out, so it cannot detect a label that BOTH engines
+        # ignore (orphaned).
+        self._registered_intent_labels: set = set()
         self._training_lock = threading.Lock()
         self.bus.on("mycroft.skills.trained", self._on_skills_trained)
         self.bus.on("register_intent", self._on_intent_registered)
@@ -774,7 +831,12 @@ class MiniCroft(SkillManager):
         skill_id = message.data.get("skill_id") or (message.context or {}).get("skill_id")
         if not skill_id:
             skill_id = "anonymous_skill"
+        name = message.data.get("name", "")
+        if name.endswith(".intent"):
+            name = name[:-len(".intent")]
         with self._training_lock:
+            if name:
+                self._registered_intent_labels.add(name)
             self._registered_skill_ids.add(skill_id)
 
     @property
@@ -1263,6 +1325,204 @@ def get_minicroft(skill_ids: Union[List[str], str], *args,
         # them skip cleanup and leak the started MiniCroft process.
         croft.stop()
         raise
+
+
+def m2v_model_labels(model: str) -> List[str]:
+    """Return the canonical ``<skill_id>:<intent_name>`` labels a model2vec
+    classifier checkpoint was trained on.
+
+    Reads ``config.json``'s ``head_config.classes`` — the classifier head's
+    trained class list — either from a local model directory or, for a
+    HuggingFace repo id, via ``huggingface_hub.hf_hub_download`` (shared HF
+    cache, no re-download on repeat calls). This is the single source of
+    truth for "what the classifier can possibly answer"; nothing in this
+    module hard-codes a label list.
+    """
+    if os.path.isdir(model):
+        config_path = os.path.join(model, "config.json")
+    else:
+        import huggingface_hub
+        config_path = huggingface_hub.hf_hub_download(model, "config.json")
+    with open(config_path) as f:
+        config = json.load(f)
+    return list(config["head_config"]["classes"])
+
+
+def assert_m2v_label_split(mc: MiniCroft) -> None:
+    """Assert the dual m2v boot's classifier/prototype label split is sound.
+
+    Every intent label a loaded skill registered must be served by exactly
+    one of the two engines: the classifier (if the label is in the model's
+    trained class list) or prototype mode (if it is not). Raises
+    ``RuntimeError`` naming any label served by both (a config bug: the
+    prototype stage's deny-list is missing a model label) or by neither (a
+    label neither engine will ever match). It also raises when nothing was
+    registered at all, or when labels were registered but neither engine
+    holds any: an empty split is unverifiable, not sound.
+
+    Called automatically by ``get_m2v_minicroft(prototype=True)``; exposed
+    here so a suite that assembles its own dual-mode config can also run it.
+    """
+    classifier = mc.intents.pipeline_plugins.get("ovos-m2v-pipeline")
+    prototype = mc.intents.pipeline_plugins.get("ovos-m2v-prototype-pipeline")
+    if classifier is None or prototype is None:
+        raise RuntimeError(
+            "assert_m2v_label_split: both ovos-m2v-pipeline and "
+            "ovos-m2v-prototype-pipeline must be loaded")
+    model_labels = set(m2v_model_labels(classifier.config.get("model")))
+    all_registered = set(mc._registered_intent_labels)
+    if not all_registered:
+        raise RuntimeError(
+            "assert_m2v_label_split: no intent labels were registered — "
+            "no skill loaded, so the split is unverifiable")
+    classifier_set = model_labels & set(classifier.intents)
+    prototype_set = set(prototype.intents) - set(prototype.ignore_labels)
+    if not classifier_set and not prototype_set:
+        raise RuntimeError(
+            "assert_m2v_label_split: labels were registered but neither "
+            f"engine holds any — registered: {sorted(all_registered)}; the "
+            "plugin config reached neither stage")
+    both = classifier_set & prototype_set
+    neither = all_registered - (classifier_set | prototype_set)
+    if both or neither:
+        raise RuntimeError(
+            "m2v label split unsound — in both engines: "
+            f"{sorted(both)}; in neither: {sorted(neither)}")
+
+
+def get_m2v_minicroft(skill_ids: Union[List[str], str],
+                      model: str = M2V_MULTILINGUAL_MODEL,
+                      conf_high: float = 0.7,
+                      conf_medium: float = 0.5,
+                      conf_low: float = 0.15,
+                      ignore_intents: Optional[List[str]] = None,
+                      lang: Optional[str] = None,
+                      secondary_langs: Optional[List[str]] = None,
+                      extra_pipeline_config: Optional[Dict[str, Any]] = None,
+                      max_wait: float = 300,
+                      wait_for_trained: bool = False,
+                      prototype: bool = True,
+                      prototype_ignore_intents: Optional[List[str]] = None,
+                      prototype_conf_high: Optional[float] = None,
+                      prototype_conf_medium: Optional[float] = None,
+                      prototype_conf_low: Optional[float] = None,
+                      **kwargs) -> MiniCroft:
+    """Boot a MiniCroft that routes intents through model2vec.
+
+    With ``prototype=True`` (the default) this boots BOTH model2vec modes
+    side by side, via ``M2V_DUAL_PIPELINE``: the classifier for the labels
+    the checkpoint was trained on, and prototype mode — built at boot time
+    from whatever skills load, straight from their shipped ``.intent`` files
+    — for every other label. The prototype stage deny-lists the classifier's
+    label set (read from the model's own ``config.json`` via
+    ``m2v_model_labels``, never hard-coded) so each label is served by
+    exactly one engine, and prototype runs ahead of the classifier at every
+    tier: the classifier is confidently wrong on a label it never saw, while
+    prototype mode cannot fire on a label denied to it, so ordering
+    prototype first costs nothing on the labels the classifier owns and wins
+    the only real overlap case. ``assert_m2v_label_split`` verifies this
+    split holds before returning, and raises loudly if a label ends up
+    served by both engines or by neither.
+
+    With ``prototype=False`` this boots the classifier alone via
+    ``M2V_PIPELINE``, exactly as it did before dual-mode existed — for
+    callers who want only the trained checkpoint and no per-boot prototype
+    build.
+
+    This is the reusable entry point for routing a skill's golden/e2e
+    utterances through the candidate default engine. The classifier syncs the
+    loaded skills' registered `<skill_id>:<intent_name>` labels at runtime and
+    only matches labels that are both in the trained model and currently
+    loaded, so a single boot exercises real localized routing for any skill.
+
+    The model downloads to the shared HuggingFace cache on first use (~512MB
+    for the multilingual checkpoint), so the default ``max_wait`` is generous.
+
+    Args:
+        skill_ids: One or more skill plugin IDs to load.
+        model: HuggingFace repo id or local path of the model2vec classifier
+            pipeline. Defaults to the multilingual candidate default engine.
+        conf_high/conf_medium/conf_low: Confidence thresholds for the
+            classifier's high/medium/low pipeline tiers (0.7/0.5/0.15 are
+            calibrated for the classifier's softmax probabilities).
+        ignore_intents: Intent labels the classifier must never emit. Merged
+            into the prototype stage's deny-list too when ``prototype=True``.
+        prototype_conf_high/prototype_conf_medium/prototype_conf_low:
+            Confidence thresholds for the prototype stage's tiers. Prototype
+            mode scores raw cosine similarity, not a softmax probability, so
+            the classifier's 0.7/0.5/0.15 defaults do not carry over; left
+            unset (the default), the prototype plugin's own defaults apply.
+        lang: Primary language tag (e.g. "en-US"). A multilingual model routes
+            other languages regardless; set this to the utterance's language
+            for correct dialog rendering.
+        secondary_langs: Extra languages to load skill resources for.
+        extra_pipeline_config: Merged into the ovos_m2v_pipeline (classifier)
+            config section (e.g. {"renormalize": False}).
+        max_wait: Seconds to wait for READY (covers first-run model download).
+        wait_for_trained: Defaults False — neither m2v mode emits
+            "mycroft.skills.trained"; prototype registration happens
+            synchronously at READY, so there is nothing to wait for. The
+            explicit default is kept for older harness versions.
+        prototype: Boot both m2v modes side by side (default). ``False``
+            boots the classifier alone.
+        prototype_ignore_intents: Override the prototype stage's computed
+            deny-list (normally the model's own label list plus
+            ``ignore_intents``) with exactly this list instead. For tests
+            that need to force a label-split violation; leave unset in
+            normal use.
+
+    Returns:
+        A started, READY MiniCroft booted with ``M2V_DUAL_PIPELINE`` (or
+        ``M2V_PIPELINE`` when ``prototype=False``).
+    """
+    m2v_cfg: Dict[str, Any] = {
+        "model": model,
+        "conf_high": conf_high,
+        "conf_medium": conf_medium,
+        "conf_low": conf_low,
+        "ignore_intents": ignore_intents or [],
+    }
+    if extra_pipeline_config:
+        m2v_cfg.update(extra_pipeline_config)
+
+    if not prototype:
+        pipeline_config = {M2V_CONFIG_KEY: m2v_cfg}
+        return get_minicroft(skill_ids,
+                             default_pipeline=M2V_PIPELINE,
+                             pipeline_config=pipeline_config,
+                             lang=lang,
+                             secondary_langs=secondary_langs,
+                             max_wait=max_wait,
+                             wait_for_trained=wait_for_trained,
+                             **kwargs)
+
+    if prototype_ignore_intents is not None:
+        proto_ignore = list(prototype_ignore_intents)
+    else:
+        proto_ignore = sorted(set(m2v_model_labels(model)) | set(ignore_intents or []))
+    proto_cfg: Dict[str, Any] = {
+        "model": model,
+        "mode": "prototype",
+        "ignore_intents": proto_ignore,
+    }
+    if prototype_conf_high is not None:
+        proto_cfg["conf_high"] = prototype_conf_high
+    if prototype_conf_medium is not None:
+        proto_cfg["conf_medium"] = prototype_conf_medium
+    if prototype_conf_low is not None:
+        proto_cfg["conf_low"] = prototype_conf_low
+    pipeline_config = {M2V_CONFIG_KEY: m2v_cfg,
+                       M2V_PROTOTYPE_CONFIG_KEY: proto_cfg}
+    mc = get_minicroft(skill_ids,
+                       default_pipeline=M2V_DUAL_PIPELINE,
+                       pipeline_config=pipeline_config,
+                       lang=lang,
+                       secondary_langs=secondary_langs,
+                       max_wait=max_wait,
+                       wait_for_trained=wait_for_trained,
+                       **kwargs)
+    assert_m2v_label_split(mc)
+    return mc
 
 
 @dataclasses.dataclass()
