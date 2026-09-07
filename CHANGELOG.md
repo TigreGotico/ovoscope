@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.8.1a1](https://github.com/OpenVoiceOS/ovoscope/tree/1.8.1a1) (2026-09-07)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/1.8.0a1...1.8.1a1)
+
+**Merged pull requests:**
+
+- fix: harness helpers stamp context skill\_id on registration messages [\#185](https://github.com/OpenVoiceOS/ovoscope/pull/185) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [1.8.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/1.8.0a1) (2026-09-07)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/1.7.1a1...1.8.0a1)
@@ -388,10 +396,6 @@
 ## [0.19.2a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.19.2a1) (2026-06-16)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.19.1a2...0.19.2a1)
-
-**Merged pull requests:**
-
-- fix\(tts-intelligibility\): score synthesis failures as total miss, not abort [\#77](https://github.com/OpenVoiceOS/ovoscope/pull/77) ([JarbasAl](https://github.com/JarbasAl))
 
 ## [0.19.1a2](https://github.com/OpenVoiceOS/ovoscope/tree/0.19.1a2) (2026-06-15)
 
