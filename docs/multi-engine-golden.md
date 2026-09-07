@@ -151,12 +151,14 @@ not in what `write_predictions` writes.
 
 ## Extras
 
-Padatious and padacioso ship with `ovos-core[lgpl,plugins]`. Nebulento
-and `ovos-m2v-pipeline` are separate installs:
+Padacioso ships with bare `ovos-core` (via ovos-workshop). Nebulento,
+`ovos-m2v-pipeline` and Adapt are separate installs:
 
 ```
 pip install 'ovoscope[engines]'
 ```
+
+Padatious — archived, LGPL-licensed — needs `ovoscope[padatious]` instead.
 
 ## Wiring into a skill's CI
 

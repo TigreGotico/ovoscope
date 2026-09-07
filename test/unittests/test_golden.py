@@ -14,10 +14,13 @@ for determinism), so its `unavailable`/`no-model` path is asserted
 directly rather than skipped (never skip on a missing/uncached
 optional dependency).
 """
+import importlib.metadata
 import tempfile
 from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
+
+import pytest
 
 from ovoscope.golden import (DEFAULT_ENGINES, DEFAULT_GATING_ENGINES,
                               FIGHTERS, REASON_INIT_ERROR,
@@ -31,6 +34,13 @@ from ovoscope.golden import (DEFAULT_ENGINES, DEFAULT_GATING_ENGINES,
 
 SKILL_ID = "toy-skill.test"
 LANG = "en-us"
+
+# DEFAULT_GATING_ENGINES ships Padatious, Padacioso and Nebulento fighters.
+# Padatious is archived and no longer implied by a bare ovoscope install; a
+# suite that wants it opts in via ovoscope[padatious]. Tests exercising the
+# full gating set are marked `padatious` and run in the dedicated CI lane
+# that installs that extra, rather than silently skipping when it is
+# absent (a missing/mislisted extra must fail loudly, not shrink the count).
 
 # A well-covered skill: two intents with several phrasings each.
 GOOD_INTENTS = {
@@ -189,6 +199,7 @@ class TestEntryPointResolution(TestCase):
     """The registry (FIGHTERS) is data; resolution goes through the
     installed OPM pipeline-plugin entry points, not hardcoded classes."""
 
+    @pytest.mark.padatious
     def test_every_default_fighter_resolves_to_an_installed_plugin(self):
         for competitor_id, spec in FIGHTERS.items():
             cls = resolve_pipeline_plugin(spec.entry_point)
@@ -196,6 +207,19 @@ class TestEntryPointResolution(TestCase):
 
     def test_unknown_entry_point_resolves_to_none(self):
         self.assertIsNone(resolve_pipeline_plugin("no-such-pipeline-plugin"))
+
+    @pytest.mark.padatious
+    def test_ovos_padatious_is_importable(self):
+        """Pins the padatious CI lane's own premise: a wrong or dropped
+        ovoscope[padatious] extra must fail this loudly, not just shrink
+        the padatious-marked test count."""
+        importlib.metadata.distribution("ovos-padatious")
+
+    def test_ovos_padatious_is_not_importable_in_the_base_lane(self):
+        """Pins the base CI lane's own premise: bare ovoscope must never
+        pull ovos-padatious back in."""
+        with self.assertRaises(importlib.metadata.PackageNotFoundError):
+            importlib.metadata.distribution("ovos-padatious")
 
     def test_a_new_fighter_needs_no_new_adapter_class(self):
         """Adding a fighter for an OPM-conformant plugin ovoscope has
@@ -221,6 +245,7 @@ class TestRunGoldenSuite(TestCase):
     abstains as) unavailable without failing the gate, the core-flag is
     enforced, and a thin template fails the gate."""
 
+    @pytest.mark.padatious
     def test_template_engines_full_coverage_and_m2v_informational(self):
         groups = {(SKILL_ID, LANG): GOOD_INTENTS}
         engines = _fresh_engines()
@@ -274,6 +299,7 @@ class TestRunGoldenSuite(TestCase):
                 p.confidence, 0.8,
                 f"{p.competitor_id} {p.utterance!r}: implausible confidence {p.confidence}")
 
+    @pytest.mark.padatious
     def test_core_flag_enforced_on_gating_engines(self):
         """A core row that fails must fail the gate even though every
         non-core row still matches: the CORE utterance's own template
@@ -295,6 +321,7 @@ class TestRunGoldenSuite(TestCase):
         with self.assertRaises(AssertionError):
             assert_gates(scoreboard)
 
+    @pytest.mark.padatious
     def test_thin_template_fails_template_engine_gate(self):
         rows = GOLDEN_ROWS + [THIN_ROW]
         groups = {(SKILL_ID, LANG): THIN_INTENTS}

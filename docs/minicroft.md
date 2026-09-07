@@ -145,14 +145,14 @@ configured pipeline (see "Lean Default Pipeline" above) failed to load —
 naming the missing stage(s) — so a plugin that's absent or errors during
 init is never silently dropped from the boot.
 
-Only `ovos-core[lgpl,plugins]` (or the specific pipeline plugin packages)
-ship Adapt/Padatious/Padacioso matchers. Adapt and Padacioso live in
-`[plugins]`; Padatious is LGPL-licensed and lives in `[lgpl]` instead —
-`[plugins]` alone leaves Padatious missing. Installing bare `ovos-core` in
-a test environment leaves only Padacioso available, so every
-Adapt-registered intent silently fails to match — install
-`ovos-core[lgpl,plugins]` (or the plugins your skills under test actually
-need) alongside ovoscope.
+Bare `ovos-core` (ovoscope's own dependency) ships one matcher, Padacioso,
+via ovos-workshop's unconditional dependency on it. Adapt and Model2Vec
+come from ovoscope's own `engines` extra (`ovoscope[engines]`), and
+Padatious — archived, LGPL-licensed — comes from ovoscope's own
+`padatious` extra (`ovoscope[padatious]`), which forwards to
+`ovos-core[plugins]`. A test environment that only installed bare `ovos-core`
+sees every Adapt- or Padatious-registered intent silently fail to match;
+install the extra for whichever matcher the skill under test needs.
 ---
 ## Injecting Skills Under Test
 To test a skill class that isn't installed as a plugin, inject it directly via `extra_skills`:

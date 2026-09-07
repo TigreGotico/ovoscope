@@ -14,4 +14,5 @@ jobs:
       coverage_source: 'ovoscope'
       test_path: 'test/unittests/'
       test_extras: 'test'
+      pytest_args: '-m "not padatious"'
       min_coverage: 0

@@ -34,15 +34,16 @@ reset at each stable release.
   training orchestration noise, before comparing — never by subsequence
   matching, so a genuinely missing or duplicated message still fails. See
   [docs/capture-session.md](capture-session.md#default-ignored-messages).
-- `ovoscope`'s own `ovos-core` dependency now pulls the `[lgpl,plugins]`
-  extras (same pair the installer itself uses). Bare `ovos-core` ships no
-  pipeline matchers at all; `[plugins]` alone covers Adapt and Padacioso but
-  not Padatious, which is LGPL-licensed and lives in `[lgpl]` — a
-  `[plugins]`-only pin still silently drops every Padatious-registered
-  intent to no match. Test environments that installed `ovos-core`
-  explicitly (bypassing ovoscope's own dependency) still need both extras
-  (or the specific pipeline plugins under test) themselves. See
-  [docs/minicroft.md](minicroft.md#factory-get_minicroft).
+- `ovoscope`'s own `ovos-core` dependency dropped the `[lgpl,plugins]`
+  extras and installs bare `ovos-core`. A bare install ships one pipeline
+  matcher, Padacioso, which arrives transitively through ovos-workshop
+  (an ovos-core dependency that pins padacioso unconditionally); it ships
+  no other pipeline matchers. A suite pulls in Adapt and Model2Vec via
+  ovoscope's own `engines` extra, and Padatious (archived, LGPL-licensed)
+  via ovoscope's own `padatious` extra, which forwards to `ovos-core[plugins]`.
+  Test environments that installed `ovos-core` explicitly (bypassing
+  ovoscope's own dependency) need the matching extras or pipeline plugins
+  themselves. See [docs/minicroft.md](minicroft.md#factory-get_minicroft).
 - The `pytest_pycollect_makemodule` hook no longer lets a module-level
   `pytest.skip()`/`pytest.importorskip()` abort the whole collection
   session. `pytest.skip.Exception` derives from `BaseException`, not

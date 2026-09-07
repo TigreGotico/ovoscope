@@ -4,6 +4,8 @@ import threading
 import unittest
 from unittest.mock import patch
 
+import pytest
+
 from ovos_bus_client.message import Message
 from ovos_spec_tools import SpecMessage
 from ovos_utils.log import LOG
@@ -664,17 +666,19 @@ class TestTrainedQuietWindow(unittest.TestCase):
         finally:
             mc.stop()
 
+    @pytest.mark.padatious
     def test_lean_default_pipeline_has_a_trainer(self):
         """Detection premise: the lean default (padacioso/padatious) does
         subscribe to 'mycroft.skills.train'. If this ever stops holding,
         the wait-skip logic above would start skipping every boot's wait
-        silently, so this must never regress unnoticed."""
+        silently, so this must never regress unnoticed. LIGHT_TEST_PIPELINE
+        (padacioso only) has no trainer at all, so it cannot stand in for
+        the premise here — this needs ovoscope[padatious] (see the
+        dedicated CI lane) rather than falling back to the wrong
+        pipeline."""
         skill_id = "ovoscope-unittest-lean-has-trainer.test"
-        pipeline = (LEAN_DEFAULT_PIPELINE
-                    if is_pipeline_available(LEAN_DEFAULT_PIPELINE)
-                    else LIGHT_TEST_PIPELINE)
         mc = get_minicroft([skill_id], extra_skills={skill_id: PingSkill},
-                           default_pipeline=pipeline, wait_for_trained=False)
+                           default_pipeline=LEAN_DEFAULT_PIPELINE, wait_for_trained=False)
         try:
             self.assertTrue(mc.bus.ee.listeners("mycroft.skills.train"))
         finally:

@@ -15,13 +15,15 @@ requires-python = ">=3.10"
 dependencies = [
     # Alpha pin: 2.0.4 stable not yet released; 2.0.4a2 is the minimum that
     # includes the FakeBus-compatible SkillManager changes ovoscope depends on.
-    # [lgpl,plugins] extras: bare ovos-core ships no pipeline matchers at
-    # all. Adapt and Padacioso live in [plugins]; Padatious lives in [lgpl]
-    # (LGPL-licensed, kept out of [plugins] on purpose) — true for the pinned
-    # 2.0.4a2 floor per its PyPI metadata, same split the installer itself
-    # uses ([lgpl,plugins]). [plugins] alone leaves Padatious missing and
-    # every Padatious-registered intent silently unmatched.
-    "ovos-core[lgpl,plugins]>=2.0.4a2",
+    # Bare ovos-core ships no pipeline matchers at all. ovos-workshop (an
+    # ovos-core dependency) already pins padacioso unconditionally, so a
+    # plain install still has one matcher available. Padatious lives in
+    # ovos-core's [lgpl] extra (LGPL-licensed, kept out of the default
+    # install on purpose) and Padatious is being archived, so it must not be
+    # implied here — a suite that still needs it opts in via ovoscope's own
+    # `padatious` extra. Adapt and Model2Vec are opted into via the
+    # `engines` extra.
+    "ovos-core>=2.0.4a2",
     # The audio harness emits/observes the ovos.* spec topics while ovos-audio
     # still produces the legacy topics. >=0.12.0a1 is the first FakeBus that
     # mirrors MessageBusClient's legacy<->ovos.* namespace migration (ovos-utils
@@ -67,16 +69,20 @@ listener = ["ovos-dinkum-listener>=0.7.2a1"]
 # Per-clip WakeWordProbe (ovoscope.wakeword_probe): streams audio arrays through
 # a real HotWordEngine. Only needs numpy — the engine itself is environmental.
 bench = ["numpy"]
-# Multi-engine golden-utterance runner (ovoscope.golden): template engines
-# plus the Model2Vec zero-shot prototype pipeline, scored standalone against
-# a skill's own resource files (no bus/MiniCroft boot required). Padatious
-# and padacioso already ship with ovos-core[lgpl,plugins]; nebulento and
-# ovos-m2v-pipeline do not, so they are listed explicitly here.
+# Multi-engine golden-utterance runner (ovoscope.golden) and the live
+# pipeline harness: template engines plus the Model2Vec zero-shot prototype
+# pipeline and the real Adapt matcher, scored/run standalone against a
+# skill's own resource files. Padacioso ships transitively via ovos-workshop;
+# nebulento, Model2Vec and Adapt do not, so they are listed explicitly here.
 engines = [
     "nebulento",
     "ovos-m2v-pipeline",
+    "ovos-adapt-parser",
     "ovos-spec-tools>=1.9.1a1",
 ]
+# Legacy path: pulls Padatious back in via ovos-core's own [plugins] extra
+# for suites that still exercise the (archived) Padatious pipeline plugin.
+padatious = ["ovos-core[plugins]>=2.0.4a2"]
 # End-to-end TTS intelligibility scoring (WER/CER round-trip via reference STT).
 # faster-whisper itself is pulled by the plugin — don't list it here to avoid
 # version skew.
@@ -102,6 +108,7 @@ test = [
     "pytest-cov",
     "nebulento",
     "ovos-m2v-pipeline",
+    "ovos-adapt-parser",
     "ovos-spec-tools>=1.9.1a1",
 ]
 dev = ["ovoscope[test]"]
@@ -127,6 +134,9 @@ ovoscope = ["skill_data/*", "*.md"]
 [tool.pytest.ini_options]
 testpaths = ["test"]
 timeout = 60
+markers = [
+    "padatious: requires ovoscope[padatious] (the archived ovos-padatious plugin)",
+]
 
 [tool.coverage.run]
 relative_files = true
