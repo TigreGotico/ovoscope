@@ -30,6 +30,10 @@ bus message that comes back: type, data, routing context, session state, and mes
 ```bash
 pip install ovoscope
 ```
+A bare install ships one pipeline matcher, Padacioso (via `ovos-core`'s own
+`ovos-workshop` dependency). Add `ovoscope[engines]` for Adapt and
+Model2Vec, or `ovoscope[padatious]` for the (archived) Padatious plugin.
+
 To add typed message model support:
 ```bash
 pip install ovoscope[pydantic]
