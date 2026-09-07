@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.8.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/1.8.0a1) (2026-09-07)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/1.7.1a1...1.8.0a1)
+
+**Merged pull requests:**
+
+- feat: m2v boot mode with classifier and prototype stages side by side [\#182](https://github.com/OpenVoiceOS/ovoscope/pull/182) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [1.7.1a1](https://github.com/OpenVoiceOS/ovoscope/tree/1.7.1a1) (2026-09-06)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/1.7.0a2...1.7.1a1)
@@ -388,10 +396,6 @@
 ## [0.19.1a2](https://github.com/OpenVoiceOS/ovoscope/tree/0.19.1a2) (2026-06-15)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.19.1a1...0.19.1a2)
-
-**Merged pull requests:**
-
-- feat: TTS end-to-end intelligibility harness [\#75](https://github.com/OpenVoiceOS/ovoscope/pull/75) ([JarbasAl](https://github.com/JarbasAl))
 
 ## [0.19.1a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.19.1a1) (2026-06-14)
 
