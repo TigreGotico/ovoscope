@@ -748,12 +748,22 @@ class TestE2EHelpersOnAFakeBus(unittest.TestCase):
     def test_register_adapt_vocab_emits_one_message_per_word(self):
         from ovoscope.e2e import register_adapt_vocab
 
-        register_adapt_vocab(self.bus, "Fruit", ["apple", "pear"], settle=0)
+        register_adapt_vocab(
+            self.bus, "Fruit", ["apple", "pear"], skill_id="sk", settle=0
+        )
         vocab = [m for m in self.seen if m.msg_type == "register_vocab"]
         self.assertEqual(len(vocab), 2)
         self.assertEqual(
             [m.data["entity_value"] for m in vocab], ["apple", "pear"])
         self.assertTrue(all(m.data["entity_type"] == "Fruit" for m in vocab))
+
+    def test_register_adapt_vocab_requires_skill_id(self):
+        # Unscoped Adapt vocab names ("Fruit") carry no skill_id to derive —
+        # omitting the keyword must fail loud, not register ownerless.
+        from ovoscope.e2e import register_adapt_vocab
+
+        with self.assertRaises(TypeError):
+            register_adapt_vocab(self.bus, "Fruit", ["apple"], settle=0)
 
     def test_register_adapt_intent_round_trip(self):
         pytest.importorskip("adapt")
@@ -762,13 +772,15 @@ class TestE2EHelpersOnAFakeBus(unittest.TestCase):
         from ovoscope.e2e import detach_intent, register_adapt_intent
 
         builder = IntentBuilder("R2TestIntent").require("Fruit")
-        register_adapt_intent(self.bus, builder, lang="en-US", settle=0)
+        register_adapt_intent(
+            self.bus, builder, lang="en-US", skill_id="sk", settle=0
+        )
         registered = [m for m in self.seen
                       if m.msg_type == "register_intent"]
         self.assertEqual(len(registered), 1)
         self.assertEqual(registered[0].context["lang"], "en-US")
 
-        detach_intent(self.bus, "R2TestIntent", settle=0)
+        detach_intent(self.bus, "R2TestIntent", skill_id="sk", settle=0)
         detached = [m for m in self.seen if m.msg_type == "detach_intent"]
         self.assertEqual(len(detached), 1)
         self.assertEqual(detached[0].data["intent_name"], "R2TestIntent")
@@ -780,8 +792,23 @@ class TestE2EHelpersOnAFakeBus(unittest.TestCase):
         from ovoscope.e2e import register_adapt_intent
 
         intent = IntentBuilder("R2Built").require("Fruit").build()
-        register_adapt_intent(self.bus, intent, settle=0)
+        register_adapt_intent(self.bus, intent, skill_id="sk", settle=0)
         self.assertIn("register_intent", self._types())
+
+    def test_register_adapt_intent_stamps_context_skill_id(self):
+        # OVOS-INTENT-4 §3.1/§3.2: explicit skill_id is stamped on context
+        # since Adapt intent names are not "<skill_id>:<name>"-scoped.
+        pytest.importorskip("adapt")
+        from adapt.intent import IntentBuilder
+
+        from ovoscope.e2e import register_adapt_intent
+
+        builder = IntentBuilder("R2TestIntent").require("Fruit")
+        register_adapt_intent(
+            self.bus, builder, lang="en-US", skill_id="sk", settle=0
+        )
+        registered = [m for m in self.seen if m.msg_type == "register_intent"]
+        self.assertEqual(registered[0].context["skill_id"], "sk")
 
 
 class TestCliErrors(unittest.TestCase):

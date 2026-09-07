@@ -86,7 +86,7 @@ class TestRegistrationShims(unittest.TestCase):
 
     def test_register_padatious_intent_emits_event(self):
         register_padatious_intent(
-            self.bus, "sk:hi", ["hi", "hello"], settle=0.0
+            self.bus, "sk:hi", ["hi", "hello"], skill_id="sk", settle=0.0
         )
         self.assertEqual(self._types(), ["padatious:register_intent"])
         d = self.captured[0].data
@@ -94,16 +94,40 @@ class TestRegistrationShims(unittest.TestCase):
         self.assertEqual(d["samples"], ["hi", "hello"])
         self.assertEqual(d["lang"], "en-US")
 
+    def test_register_padatious_intent_stamps_context_skill_id(self):
+        register_padatious_intent(
+            self.bus, "sk:hi", ["hi"], skill_id="sk", settle=0.0
+        )
+        self.assertEqual(self.captured[0].context["skill_id"], "sk")
+
+    def test_register_padatious_intent_requires_skill_id(self):
+        # OVOS-INTENT-4 §3.1/§3.2: no derivation fallback — omitting the
+        # keyword is a caller bug, not a message ovoscope silently sends
+        # unattributed.
+        with self.assertRaises(TypeError):
+            register_padatious_intent(self.bus, "sk:hi", ["hi"], settle=0.0)
+
     def test_register_padatious_entity_emits_event(self):
         register_padatious_entity(
-            self.bus, "item", ["milk", "bread"], settle=0.0
+            self.bus, "item", ["milk", "bread"], skill_id="sk", settle=0.0
         )
         self.assertEqual(self._types(), ["padatious:register_entity"])
         self.assertEqual(self.captured[0].data["samples"], ["milk", "bread"])
 
+    def test_register_padatious_entity_stamps_context_skill_id(self):
+        register_padatious_entity(
+            self.bus, "item", ["milk"], skill_id="sk", settle=0.0
+        )
+        self.assertEqual(self.captured[0].context["skill_id"], "sk")
+
+    def test_register_padatious_entity_requires_skill_id(self):
+        with self.assertRaises(TypeError):
+            register_padatious_entity(self.bus, "item", ["milk"], settle=0.0)
+
     def test_register_adapt_vocab_emits_one_event_per_word(self):
         register_adapt_vocab(
-            self.bus, "sk:Light", ["light", "lamp", "bulb"], settle=0.0
+            self.bus, "sk:Light", ["light", "lamp", "bulb"],
+            skill_id="sk", settle=0.0,
         )
         self.assertEqual(self._types(), ["register_vocab"] * 3)
         values = [m.data["entity_value"] for m in self.captured]
@@ -111,12 +135,40 @@ class TestRegistrationShims(unittest.TestCase):
         for m in self.captured:
             self.assertEqual(m.data["entity_type"], "sk:Light")
 
+    def test_register_adapt_vocab_stamps_context_skill_id(self):
+        register_adapt_vocab(
+            self.bus, "sk:Light", ["light"], skill_id="sk", settle=0.0
+        )
+        self.assertEqual(self.captured[0].context["skill_id"], "sk")
+
+    def test_register_adapt_vocab_requires_skill_id(self):
+        # Adapt vocab names are conventionally unscoped ("Fruit", "greeting")
+        # so there is nothing to derive a skill_id from — the caller MUST
+        # supply one or the vocab registers ownerless and detach_skill can
+        # never remove it.
+        with self.assertRaises(TypeError):
+            register_adapt_vocab(self.bus, "Fruit", ["apple"], settle=0.0)
+
     def test_detach_helpers(self):
-        detach_intent(self.bus, "sk:hi", settle=0.0)
+        detach_intent(self.bus, "sk:hi", skill_id="sk", settle=0.0)
         detach_skill(self.bus, "sk", settle=0.0)
         self.assertEqual(self._types(), ["detach_intent", "detach_skill"])
         self.assertEqual(self.captured[0].data["intent_name"], "sk:hi")
         self.assertEqual(self.captured[1].data["skill_id"], "sk")
+
+    def test_detach_intent_stamps_context_skill_id(self):
+        detach_intent(self.bus, "sk:hi", skill_id="sk", settle=0.0)
+        self.assertEqual(self.captured[0].context["skill_id"], "sk")
+
+    def test_detach_intent_requires_skill_id(self):
+        with self.assertRaises(TypeError):
+            detach_intent(self.bus, "sk:hi", settle=0.0)
+
+    def test_detach_skill_stamps_context_skill_id(self):
+        # This is the message ``E2EPipelineHarness.setUp()`` emits to isolate
+        # tests; a §3.1/§3.2-conformant plugin drops it without this.
+        detach_skill(self.bus, "sk", settle=0.0)
+        self.assertEqual(self.captured[0].context["skill_id"], "sk")
 
 
 class TestWaitHelpers(unittest.TestCase):
