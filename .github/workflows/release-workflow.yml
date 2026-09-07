@@ -17,7 +17,7 @@ jobs:
     secrets: inherit
     with:
       python_versions: '["3.10", "3.11", "3.12", "3.13"]'
-      install_extras: "audio,pydantic"
+      install_extras: "test"
       test_path: "test/unittests/"
 
   publish_alpha:
