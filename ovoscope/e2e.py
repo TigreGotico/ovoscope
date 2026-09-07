@@ -161,41 +161,47 @@ def wait_for_failure(bus, *, timeout: float = 2.0) -> bool:
 # Adapt family (adapt, palavreado, …) — registers vocab + IntentBuilder.
 
 def register_padatious_intent(
-    bus, name: str, samples: List[str], *, lang: str = "en-US",
+    bus, name: str, samples: List[str], *, skill_id: str, lang: str = "en-US",
     settle: float = 0.1,
 ) -> None:
-    bus.emit(Message("padatious:register_intent", {
+    msg = Message("padatious:register_intent", {
         "name": name, "samples": samples, "lang": lang,
-    }))
+    })
+    msg.context["skill_id"] = skill_id
+    bus.emit(msg)
     if settle:
         time.sleep(settle)
 
 
 def register_padatious_entity(
-    bus, name: str, samples: List[str], *, lang: str = "en-US",
+    bus, name: str, samples: List[str], *, skill_id: str, lang: str = "en-US",
     settle: float = 0.1,
 ) -> None:
-    bus.emit(Message("padatious:register_entity", {
+    msg = Message("padatious:register_entity", {
         "name": name, "samples": samples, "lang": lang,
-    }))
+    })
+    msg.context["skill_id"] = skill_id
+    bus.emit(msg)
     if settle:
         time.sleep(settle)
 
 
 def register_adapt_vocab(
-    bus, entity_type: str, words: List[str], *, lang: str = "en-US",
-    settle: float = 0.1,
+    bus, entity_type: str, words: List[str], *, skill_id: str,
+    lang: str = "en-US", settle: float = 0.1,
 ) -> None:
     for word in words:
-        bus.emit(Message("register_vocab", {
+        msg = Message("register_vocab", {
             "entity_value": word, "entity_type": entity_type, "lang": lang,
-        }))
+        })
+        msg.context["skill_id"] = skill_id
+        bus.emit(msg)
     if settle:
         time.sleep(settle)
 
 
-def register_adapt_intent(bus, builder, *, lang: str = "en-US",
-                          settle: float = 0.1) -> None:
+def register_adapt_intent(bus, builder, *, skill_id: str,
+                          lang: str = "en-US", settle: float = 0.1) -> None:
     """Register an Adapt intent.
 
     ``builder`` may be an ``IntentBuilder`` (will be ``.build()``-ed) or an
@@ -204,19 +210,25 @@ def register_adapt_intent(bus, builder, *, lang: str = "en-US",
     intent = builder.build() if hasattr(builder, "build") else builder
     msg = Message("register_intent", intent.__dict__)
     msg.context["lang"] = lang
+    msg.context["skill_id"] = skill_id
     bus.emit(msg)
     if settle:
         time.sleep(settle)
 
 
-def detach_intent(bus, intent_name: str, *, settle: float = 0.1) -> None:
-    bus.emit(Message("detach_intent", {"intent_name": intent_name}))
+def detach_intent(bus, intent_name: str, *, skill_id: str,
+                  settle: float = 0.1) -> None:
+    msg = Message("detach_intent", {"intent_name": intent_name})
+    msg.context["skill_id"] = skill_id
+    bus.emit(msg)
     if settle:
         time.sleep(settle)
 
 
 def detach_skill(bus, skill_id: str, *, settle: float = 0.1) -> None:
-    bus.emit(Message("detach_skill", {"skill_id": skill_id}))
+    msg = Message("detach_skill", {"skill_id": skill_id})
+    msg.context["skill_id"] = skill_id
+    bus.emit(msg)
     if settle:
         time.sleep(settle)
 

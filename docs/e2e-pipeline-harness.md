@@ -54,7 +54,7 @@ class TestNebulento(E2EPipelineHarness):
     CONFIG_KEY = "ovos-nebulento-pipeline-plugin"
 
     def test_match(self):
-        register_adapt_vocab(self.bus, "greeting", ["hello", "hi"])
+        register_adapt_vocab(self.bus, "greeting", ["hello", "hi"], skill_id=self.SKILL_ID)
         msg = self.send_and_capture("hello", ["greeting_intent"])
         assert msg is not None
 ```
@@ -112,12 +112,19 @@ directly.
 
 | Function | Engine family | Emits |
 |---|---|---|
-| `register_padatious_intent(bus, name, samples, *, lang="en-US", settle=0.1)` | Padatious, Padacioso, Nebulento | `padatious:register_intent` |
-| `register_padatious_entity(bus, name, samples, *, lang="en-US", settle=0.1)` | Padatious, Padacioso, Nebulento | `padatious:register_entity` |
-| `register_adapt_vocab(bus, entity_type, words, *, lang="en-US", settle=0.1)` | Adapt, Palavreado | `register_vocab` (one per word) |
-| `register_adapt_intent(bus, builder, *, lang="en-US", settle=0.1)` | Adapt, Palavreado | `register_intent`. `builder` may be an `IntentBuilder` (`.build()`-ed automatically) or an already-built intent object. |
-| `detach_intent(bus, intent_name, *, settle=0.1)` | any | `detach_intent` |
+| `register_padatious_intent(bus, name, samples, *, skill_id, lang="en-US", settle=0.1)` | Padatious, Padacioso, Nebulento | `padatious:register_intent` |
+| `register_padatious_entity(bus, name, samples, *, skill_id, lang="en-US", settle=0.1)` | Padatious, Padacioso, Nebulento | `padatious:register_entity` |
+| `register_adapt_vocab(bus, entity_type, words, *, skill_id, lang="en-US", settle=0.1)` | Adapt, Palavreado | `register_vocab` (one per word) |
+| `register_adapt_intent(bus, builder, *, skill_id, lang="en-US", settle=0.1)` | Adapt, Palavreado | `register_intent`. `builder` may be an `IntentBuilder` (`.build()`-ed automatically) or an already-built intent object. |
+| `detach_intent(bus, intent_name, *, skill_id, settle=0.1)` | any | `detach_intent` |
 | `detach_skill(bus, skill_id, *, settle=0.1)` | any | `detach_skill` |
+
+`skill_id` is required (except on `detach_skill`, which already takes it as
+its positional argument): every shim stamps `Message.context["skill_id"]`
+so OVOS-INTENT-4 §3.1/§3.2-conformant plugins accept the registration and
+`detach_skill` can find it again. There is no fallback derived from `name`
+or `entity_type` — Adapt vocab/intent names are conventionally unscoped, so
+guessing a `skill_id` from them would be wrong more often than not.
 
 Every shim sleeps `settle` seconds after emitting (default `0.1`) to give
 the pipeline plugin time to process the registration before the caller
