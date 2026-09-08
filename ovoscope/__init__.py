@@ -805,6 +805,11 @@ class MiniCroft(SkillManager):
         # trained instead of every skill_id passed to get_minicroft (a
         # 5-skill load with one hung trainer must not blame the other 4).
         self._registered_skill_ids: set = set()
+        # Set when load_plugin_skills() emits "mycroft.skills.train". A
+        # registration seen on the bus is not the signal: registrations
+        # arrive asynchronously and may land after the wait is decided,
+        # which is how a suite ends up querying an uncompiled container.
+        self._train_requested: bool = False
         # Every `<skill_id>:<intent_name>` label seen on register_intent /
         # padatious:register_intent, independent of any pipeline plugin's own
         # ignore-list filtering. This is the ground truth "what did the
@@ -872,6 +877,8 @@ class MiniCroft(SkillManager):
                 self._load_plugin_skill(skill_id, plug)
                 LOG.info(f"Loaded test skill: {skill_id}")
 
+        with self._training_lock:
+            self._train_requested = True
         self.bus.emit(Message("mycroft.skills.train"))  # tell any pipeline plugins to train loaded intents
 
     def _check_pipeline_available(self, pipeline: List[str]) -> bool:
@@ -1182,18 +1189,126 @@ class MiniCroft(SkillManager):
 # for).
 TRAINED_QUIET_WINDOW = 0.5
 
-# The overall bound on the trained-wait is env-tunable so CI (slower, cold
-# caches, contended runners) gets a generous default while local runs stay
-# tight. Presence of the CI env var (not its value) selects the default.
-# CI default is 180s: worst-case uninstrumented on taskset-2 was 16.8s, but
-# fleet CI jobs run under coverage instrumentation on throttled 2-core shared
-# VMs where a large single-skill intent set exceeded 60s in the field (weather:
-# 262 trained-timeout failures at 60s; the alerts multilang fixture
-# independently documents "under coverage instrumentation, booting reliably
-# needs more than 60s"). 180s serves the real condition, costs nothing on
-# healthy boots (quiet-window return), and the loud never-trained guard still
-# fires.
-_DEFAULT_TRAINED_TIMEOUT = 180.0 if os.environ.get("CI") else 5.0
+# The overall bound on the trained-wait is env-tunable, but the default
+# itself must be generous everywhere, not just under a CI env var: a 5s
+# local default is shorter than plenty of real skills' training time, and a
+# timeout here doesn't just fail the current test — it raises out of
+# setUpClass, skipping tearDownClass, which leaves class-level monkeypatches
+# and MiniCroft state leaked into later, unrelated test files. 180s: worst-case
+# uninstrumented on taskset-2 was 16.8s, but fleet CI jobs run under coverage
+# instrumentation on throttled 2-core shared VMs where a large single-skill
+# intent set exceeded 60s in the field (weather: 262 trained-timeout failures
+# at 60s; the alerts multilang fixture independently documents "under coverage
+# instrumentation, booting reliably needs more than 60s"). 180s serves the
+# real condition, costs nothing on healthy boots (quiet-window return), and
+# the loud never-trained guard still fires.
+_DEFAULT_TRAINED_TIMEOUT = 180.0
+# Hard cap on the whole trained wait, busy trainers included.
+_DEFAULT_TRAINED_MAX = 600.0
+
+
+def _trainers(croft: MiniCroft) -> Dict[str, object]:
+    """Pipeline plugins that train an intent container.
+
+    Read from the loaded plugins rather than from bus subscriptions: a
+    plugin is a trainer because it owns training state, and that is true
+    before it has subscribed or been asked to train anything.
+    """
+    return {pipe_id: plugin
+            for pipe_id, plugin in croft.intents.pipeline_plugins.items()
+            if hasattr(plugin, "wait_until_trained")
+            or hasattr(plugin, "finished_training_event")}
+
+
+def _pending_trainers(croft: MiniCroft) -> List[str]:
+    """Trainers with work outstanding, in flight or not yet started.
+
+    ``finished_training_event`` alone answers "is a pass running", which
+    leaves the window between ``mycroft.skills.train`` and the worker
+    picking the job up looking idle. ``needs_compile`` covers that window:
+    it is set by a registration and stays set until the container is
+    compiled. A container the plugin has given up on is not pending —
+    waiting for it would never end (``ovos_padatious.opm``).
+    """
+    pending = []
+    for pipe_id, plugin in _trainers(croft).items():
+        event = getattr(plugin, "finished_training_event", None)
+        if isinstance(event, threading.Event) and not event.is_set():
+            pending.append(pipe_id)
+            continue
+        giveup = getattr(plugin, "_compile_giveup", set())
+        containers = getattr(plugin, "containers", {})
+        if any(getattr(engine, "needs_compile", False) and lang not in giveup
+               for lang, engine in containers.items()):
+            pending.append(pipe_id)
+    return pending
+
+
+def _wait_for_trained(croft: MiniCroft, registered: set) -> None:
+    """Block until every trainer reports its containers compiled.
+
+    ``OVOSCOPE_TRAINED_TIMEOUT`` bounds silence, not training: while a
+    trainer still has work outstanding the bound is pushed forward, so a
+    skill with many locales on a loaded host is waited for rather than
+    declared stuck. ``OVOSCOPE_TRAINED_MAX`` caps the whole wait so a pass
+    that never ends cannot hang a suite.
+
+    A plugin offering ``wait_until_trained`` is asked directly; it blocks on
+    the container state the bus event only reports afterwards.
+    """
+    timeout = float(os.environ.get("OVOSCOPE_TRAINED_TIMEOUT",
+                                    _DEFAULT_TRAINED_TIMEOUT))
+    max_wait = float(os.environ.get("OVOSCOPE_TRAINED_MAX",
+                                     _DEFAULT_TRAINED_MAX))
+    started = time()
+    for pipe_id, plugin in _trainers(croft).items():
+        waiter = getattr(plugin, "wait_until_trained", None)
+        if not callable(waiter):
+            continue
+        remaining = max(0.0, (started + max_wait) - time())
+        if not waiter(timeout=remaining):
+            LOG.warning(
+                f"MiniCroft: '{pipe_id}' still reports uncompiled intent "
+                f"container(s) after {time() - started:.1f}s "
+                f"(skill_ids={sorted(registered)})"
+            )
+
+    trained_deadline = time() + timeout
+    while True:
+        with croft._training_lock:
+            times = list(croft._trained_times)
+        now = time()
+        pending = _pending_trainers(croft)
+        if pending and now - started < max_wait:
+            trained_deadline = now + timeout
+        if not times:
+            if now > trained_deadline:
+                # "mycroft.skills.trained" carries no skill_id — it
+                # reports a pipeline plugin's container(s), not a
+                # single skill — so it can't attribute which of
+                # several registered skills is the one still stuck.
+                # Name the full registered set (never the untouched
+                # skill_ids param: an intentless skill in the same
+                # load must not be blamed).
+                raise RuntimeError(
+                    "MiniCroft: training was requested but "
+                    f"'mycroft.skills.trained' never arrived within "
+                    f"{timeout}s of the trainer going idle (untrained "
+                    f"skill_ids={sorted(registered)}, trainers still "
+                    f"pending={pending}) — the pipeline plugin's intent "
+                    "container(s) never finished training"
+                )
+        elif not pending and now - max(times) >= TRAINED_QUIET_WINDOW:
+            break
+        elif now > trained_deadline:
+            LOG.warning(
+                "MiniCroft: 'mycroft.skills.trained' kept firing "
+                f"past the {timeout}s bound (skill_ids="
+                f"{sorted(registered)}); proceeding without "
+                "reaching a quiet window"
+            )
+            break
+        sleep(0.05)
 
 
 def get_minicroft(skill_ids: Union[List[str], str], *args,
@@ -1202,29 +1317,37 @@ def get_minicroft(skill_ids: Union[List[str], str], *args,
     """Create a MiniCroft, start it, and block until it reaches READY state.
 
     Once READY, and unless ``wait_for_trained=False``, this also waits for
-    "mycroft.skills.trained" to go quiet (no new event for
-    ``TRAINED_QUIET_WINDOW`` seconds) before returning — but only if both
-    hold: a loaded skill actually registered an intent (``register_intent``
-    / ``padatious:register_intent``), and a pipeline plugin on the bus
-    subscribes to "mycroft.skills.train". "mycroft.skills.trained" is not a
-    spec topic; it is a private readiness signal emitted by the
-    padatious/padacioso/nebulento family in reply to that subscription. The
+    every trainer to report its containers compiled before returning. The
+    wait is skipped when no loaded skill registered an intent
+    (``register_intent`` / ``padatious:register_intent``), because nothing
+    can be outstanding, and when nothing on the bus trains one: no loaded
+    pipeline plugin owns training state and no subscriber answers
+    "mycroft.skills.train".
+
+    The wait reads the trainer's own state rather than the bus. A plugin
+    offering ``wait_until_trained`` is asked directly, and
+    ``container.needs_compile`` decides whether work is outstanding.
+    "mycroft.skills.trained" is not a spec topic; it is a private readiness
+    signal emitted by the padatious/padacioso/nebulento family, and it is
+    set before the container finishes compiling, which is the window this
+    replaces rather than trusts. The
     m2v and adapt pipelines register intents synchronously and never
     subscribe to "mycroft.skills.train", so they never emit the reply — a
     boot using only those engines is fully loaded at READY and returns
     immediately, with no wait.
 
-    Timeout behavior: On timeout waiting for training, get_minicroft's
-    exception handler calls croft.stop(), which stops the MiniCroft process and
-    kills background training threads. A timeout guard that is too tight can
-    mask a slow trainer: the except block's stop() kills the thread before
-    training completes, making a slow-but-successful event look like it never
-    arrived. Testing shows training can arrive 3.5–4.0 seconds after READY
-    when MiniCroft is kept alive; this is why the default timeout is
-    conservative and suites with many secondary languages should pass their own
-    larger max_wait (see "Multilingual Testing" in docs/minicroft.md).
-    Callers' pytest-timeout must exceed this wait's ceiling with margin; see
-    "pytest-timeout Convention" in docs/minicroft.md.
+    Timeout behavior: ``OVOSCOPE_TRAINED_TIMEOUT`` bounds silence from an
+    idle trainer, not the length of a training pass. While a pipeline plugin
+    reports a pass in flight (its ``finished_training_event`` is clear, as
+    ``ovos_padatious.opm`` does for the whole pass) the bound is pushed
+    forward, so a skill with many locales on a loaded host is waited for
+    instead of being declared stuck. ``OVOSCOPE_TRAINED_MAX`` caps the whole
+    wait. A trainer that is busy is waited for even when no registration was
+    observed on the bus, so a suite never runs against a container that is
+    still compiling. On a raise, get_minicroft stops the MiniCroft, which
+    kills the background trainer. Callers' pytest-timeout must exceed this
+    wait's ceiling with margin; see "pytest-timeout Convention" in
+    docs/minicroft.md.
 
     Args:
         skill_ids: One or more skill plugin IDs to load.
@@ -1237,7 +1360,8 @@ def get_minicroft(skill_ids: Union[List[str], str], *args,
         RuntimeError: If a loaded skill registered intents, a pipeline
             plugin subscribes to "mycroft.skills.train", and
             "mycroft.skills.trained" never arrives within
-            ``OVOSCOPE_TRAINED_TIMEOUT`` seconds, OR if any pipeline id in
+            ``OVOSCOPE_TRAINED_TIMEOUT`` seconds of the trainer going idle
+            (or ``OVOSCOPE_TRAINED_MAX`` in total), OR if any pipeline id in
             the configured pipeline (the lean default, an
             ``extra_pipelines=`` addition, or a full ``default_pipeline=``
             override) failed to load — a missing/erroring plugin is never
@@ -1275,49 +1399,40 @@ def get_minicroft(skill_ids: Union[List[str], str], *args,
 
         with croft._training_lock:
             registered = set(croft._registered_skill_ids)
-        has_trainer = bool(croft.bus.ee.listeners("mycroft.skills.train"))
-        if registered and not has_trainer:
-            LOG.debug(
-                "MiniCroft: skill(s) registered intents but no pipeline "
-                "plugin on the bus subscribes to 'mycroft.skills.train' "
-                f"(skill_ids={sorted(registered)}) — nothing will report "
-                "training done, skipping the trained wait"
+            train_requested = croft._train_requested
+        trainers = _trainers(croft)
+        # A plugin that owns training state is a trainer whether or not it
+        # has subscribed yet; a bus subscriber that owns none still promises
+        # to report, and #179's guard holds it to that.
+        has_trainer = bool(trainers) or bool(
+            croft.bus.ee.listeners("mycroft.skills.train"))
+        pending = _pending_trainers(croft)
+        if not wait_for_trained:
+            LOG.info("MiniCroft: wait_for_trained=False, not waiting for "
+                     "intent training")
+        elif not train_requested:
+            LOG.info("MiniCroft: no skills were loaded, so no training was "
+                     "requested; skipping the trained wait")
+        elif not has_trainer:
+            LOG.info(
+                "MiniCroft: nothing trains an intent container — no loaded "
+                "pipeline plugin owns training state and no bus subscriber "
+                "answers 'mycroft.skills.train' (pipeline="
+                f"{sorted(croft.intents.pipeline_plugins)}), skipping the "
+                "trained wait"
             )
-        if wait_for_trained and registered and has_trainer:
-            timeout = float(os.environ.get("OVOSCOPE_TRAINED_TIMEOUT",
-                                            _DEFAULT_TRAINED_TIMEOUT))
-            trained_deadline = time() + timeout
-            while True:
-                with croft._training_lock:
-                    times = list(croft._trained_times)
-                now = time()
-                if not times:
-                    if now > trained_deadline:
-                        # "mycroft.skills.trained" carries no skill_id — it
-                        # reports a pipeline plugin's container(s), not a
-                        # single skill — so it can't attribute which of
-                        # several registered skills is the one still stuck.
-                        # Name the full registered set (never the untouched
-                        # skill_ids param: an intentless skill in the same
-                        # load must not be blamed).
-                        raise RuntimeError(
-                            "MiniCroft: skill(s) registered intents but "
-                            f"'mycroft.skills.trained' never arrived within "
-                            f"{timeout}s (untrained skill_ids="
-                            f"{sorted(registered)}) — the pipeline plugin's "
-                            "intent container(s) never finished training"
-                        )
-                elif now - max(times) >= TRAINED_QUIET_WINDOW:
-                    break
-                elif now > trained_deadline:
-                    LOG.warning(
-                        "MiniCroft: 'mycroft.skills.trained' kept firing "
-                        f"past the {timeout}s bound (skill_ids="
-                        f"{sorted(registered)}); proceeding without "
-                        "reaching a quiet window"
-                    )
-                    break
-                sleep(0.05)
+        elif not registered:
+            # A fresh container reports `needs_compile` before anything has
+            # been registered in it, so `pending` is true on a boot that has
+            # nothing to train. Waiting on it costs every consumer seconds
+            # per boot for a compile that will never be asked for.
+            LOG.info(
+                "MiniCroft: no skill registered an intent, so nothing can be "
+                f"outstanding; skipping the trained wait (trainers reporting "
+                f"work={pending})"
+            )
+        else:
+            _wait_for_trained(croft, registered)
         return croft
     except BaseException:
         # pytest-timeout's Failed and KeyboardInterrupt derive from
