@@ -347,7 +347,19 @@ class TestOCPHarnessNamespaceBridging:
         from ovos_utils.ocp import MediaEntry, PlaybackType, PlayerState
         h.play(MediaEntry(uri="http://example.com/song.mp3",
                           playback=PlaybackType.AUDIO))
+        TestOCPHarnessNamespaceBridging._wait_for_player_state(h, PlayerState.PLAYING)
         h.assert_player_state(PlayerState.PLAYING)
+
+    @staticmethod
+    def _wait_for_player_state(h, state, timeout: float = 2.0) -> None:
+        """Poll ``h.player.state`` until it matches *state* or *timeout* elapses.
+
+        A fixed sleep races the bus's own dispatch thread under load; polling
+        returns as soon as the state settles instead of gambling on a delay.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline and h.player.state != state:
+            time.sleep(0.01)
 
     def test_cork_via_legacy_topic_natively(self) -> None:
         """The legacy ``recognizer_loop:record_begin`` corks (pauses) the player —
@@ -356,7 +368,7 @@ class TestOCPHarnessNamespaceBridging:
         with OCPPlayerHarness() as h:  # bridging default on
             self._play_then(h)
             h.bus.emit(Message("recognizer_loop:record_begin"))
-            time.sleep(0.05)
+            self._wait_for_player_state(h, PlayerState.PAUSED)
             h.assert_player_state(PlayerState.PAUSED)
 
     def test_cork_via_spec_topic_through_bridging(self) -> None:
@@ -368,7 +380,7 @@ class TestOCPHarnessNamespaceBridging:
         with OCPPlayerHarness() as h:  # bridging default on
             self._play_then(h)
             h.bus.emit(Message(str(SpecMessage.LISTENER_RECORD_STARTED)))
-            time.sleep(0.05)
+            self._wait_for_player_state(h, PlayerState.PAUSED)
             h.assert_player_state(PlayerState.PAUSED)
 
     def test_no_bridging_isolates_spec_from_legacy(self) -> None:
