@@ -13,7 +13,8 @@ from ovos_bus_client.session import SessionManager
 
 from ovoscope import (MiniCroft, get_minicroft, DEFAULT_TEST_PIPELINE,
                       LIGHT_TEST_PIPELINE, ADAPT_PIPELINE, LEAN_DEFAULT_PIPELINE,
-                      M2V_PIPELINE, PERSONA_PIPELINE, is_pipeline_available)
+                      M2V_PIPELINE, PERSONA_PIPELINE, is_pipeline_available,
+                      _DEFAULT_TRAINED_TIMEOUT)
 
 LEGACY_UTTERANCE = "recognizer_loop:utterance"
 SPEC_UTTERANCE = str(SpecMessage.UTTERANCE)  # ovos.utterance.handle
@@ -696,13 +697,20 @@ class TestMiniCroftLeanBootDefault(unittest.TestCase):
         LOG.set_level("CRITICAL")
 
     def test_lean_default_excludes_heavy_pipelines(self):
-        """LEAN_DEFAULT_PIPELINE must not reference m2v/persona/common_query/OCP."""
+        """LEAN_DEFAULT_PIPELINE must not reference m2v/persona/common_query/OCP.
+
+        The fallback -low tier is intentionally included: fallback skills
+        registered above priority 90 (e.g. fallback-unknown at 100) are only
+        reachable through ovos-fallback-pipeline-plugin-low, and it is not a
+        "heavy" pipeline plugin in the sense this test guards against.
+        """
         for stage in LEAN_DEFAULT_PIPELINE:
             self.assertNotIn("m2v", stage, f"m2v stage found: {stage}")
             self.assertNotIn("persona", stage, f"persona stage found: {stage}")
             self.assertNotIn("common-query", stage, f"common_query stage found: {stage}")
             self.assertNotIn("ocp", stage, f"OCP stage found: {stage}")
-            self.assertNotIn("-low", stage, f"-low tier stage found: {stage}")
+        self.assertIn("ovos-fallback-pipeline-plugin-low", LEAN_DEFAULT_PIPELINE,
+                       "fallback-low tier must be reachable in the lean default")
 
     def test_lean_default_boots_only_lean_plugins(self):
         """A lean-default MiniCroft must not instantiate heavy pipeline
@@ -767,41 +775,37 @@ class TestMiniCroftLeanBootDefault(unittest.TestCase):
 
 
 class TestTrainedTimeoutDefaults(unittest.TestCase):
-    """Verify that the OVOSCOPE_TRAINED_TIMEOUT default is 60s in CI and 5s locally.
-
-    This is a regression test ensuring the timeout scales appropriately: CI
-    (slower, cold caches) gets a generous default, while local runs stay tight.
-    """
+    """Guard the trained-wait default and the environment override."""
 
     def setUp(self):
         LOG.set_level("ERROR")
-        import os as os_module
-        self.os_module = os_module
 
     def tearDown(self):
         LOG.set_level("CRITICAL")
 
-    def test_ci_default_timeout_is_180_seconds(self):
-        """When CI=true, the default computed timeout must be 180s."""
-        # Test the logic: when CI env var is present, default should be 180s
-        with patch.dict("os.environ", {"CI": "true"}):
-            timeout = 180.0 if self.os_module.environ.get("CI") else 5.0
-            self.assertEqual(timeout, 180.0,
-                             "CI default timeout must be 180s to accommodate cold caches, "
-                             "coverage instrumentation, and contended runners")
+    def test_default_timeout_is_180_seconds(self):
+        """The trained-wait default is 180s, with no CI distinction."""
+        self.assertEqual(_DEFAULT_TRAINED_TIMEOUT, 180.0,
+                         "Trained-wait default must be 180s to accommodate cold "
+                         "caches, coverage instrumentation, and contended runners")
 
-    def test_local_default_timeout_is_5_seconds(self):
-        """When CI is not set, the default computed timeout must be 5s."""
-        # Test the logic: when CI is absent, default should be 5s
+    def test_default_timeout_does_not_depend_on_ci(self):
+        """Clearing or setting CI does not change the default."""
         with patch.dict("os.environ", {}, clear=True):
-            timeout = 60.0 if self.os_module.environ.get("CI") else 5.0
-            self.assertEqual(timeout, 5.0,
-                             "Local default timeout must be 5s for fast iteration")
+            self.assertEqual(_DEFAULT_TRAINED_TIMEOUT, 180.0)
+        with patch.dict("os.environ", {"CI": "true"}):
+            self.assertEqual(_DEFAULT_TRAINED_TIMEOUT, 180.0)
 
     def test_ovoscope_trained_timeout_honors_env_var(self):
-        """The OVOSCOPE_TRAINED_TIMEOUT env var is honored over the computed default."""
+        """The OVOSCOPE_TRAINED_TIMEOUT env var wins over the default."""
         with patch.dict("os.environ", {"OVOSCOPE_TRAINED_TIMEOUT": "120"}):
-            timeout_str = self.os_module.environ.get("OVOSCOPE_TRAINED_TIMEOUT")
-            timeout = float(timeout_str) if timeout_str else None
-            self.assertEqual(timeout, 120.0,
-                             "OVOSCOPE_TRAINED_TIMEOUT env var should be respected")
+            timeout = float(os.environ.get("OVOSCOPE_TRAINED_TIMEOUT",
+                                           _DEFAULT_TRAINED_TIMEOUT))
+        self.assertEqual(timeout, 120.0)
+
+    def test_default_used_when_env_var_absent(self):
+        """Without the env var the module default is what gets read."""
+        with patch.dict("os.environ", {}, clear=True):
+            timeout = float(os.environ.get("OVOSCOPE_TRAINED_TIMEOUT",
+                                           _DEFAULT_TRAINED_TIMEOUT))
+        self.assertEqual(timeout, 180.0)
