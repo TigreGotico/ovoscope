@@ -32,6 +32,13 @@ dependencies = [
     # shape ({lat, lon, tz}); >=2.11.3a1 is the first release where the spec
     # shape is the canonical location field (location_preferences is deprecated).
     "ovos-bus-client>=2.11.3a1",
+    # both_spellings() resolves a migrating topic's counterpart from the
+    # migration map, so a source/destination rule written for one spelling
+    # holds under the other. ovos-bus-client already requires this package;
+    # naming it here makes the import honest rather than transitive. The floor
+    # is the first release carrying the OVOS-FALLBACK-1 renames, without which
+    # the default keep-src topics expand to themselves and the rule is vacuous.
+    "ovos-spec-tools>=1.12.0a1",
     # ovoscope ships a pytest plugin (pytest11 entry point) -> pytest is a runtime
     # dependency. >=8 is required: the pytest_pycollect_makemodule hook dropped the
     # 'path' argument in pytest 8.

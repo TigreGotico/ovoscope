@@ -11,6 +11,7 @@ from typing import Union, List, Dict, Any, Optional
 from ovos_bus_client.message import Message
 from ovos_bus_client.session import SessionManager, Session
 from ovos_config.config import Configuration
+from ovos_spec_tools import migration_counterpart
 from ovos_config.models import LocalConf
 from ovos_core.intent_services import IntentService
 from ovos_core.skill_manager import SkillManager
@@ -54,7 +55,34 @@ DEFAULT_EOF = ["ovos.utterance.handled"]
 TERMINAL_SIGNALS = ["ovos.utterance.handled"]
 DEFAULT_ENTRY_POINTS = ["recognizer_loop:utterance"]
 DEFAULT_FLIP_POINTS = []
-DEFAULT_KEEP_SRC = ["ovos.skills.fallback.ping"]
+#: Topics whose expected source and destination are checked against the
+#: original source message rather than the rolling flip.
+#:
+#: A migrating topic has two spellings on the wire and the deployment decides
+#: which one it sees, so naming only one of them makes this rule silently
+#: position-dependent: under the other spelling the membership test misses and
+#: the comparison quietly falls through to the rolling branch. The assertion
+#: still runs and still passes, against a different rule -- which is worse than
+#: failing, because a capture that is green in both flag positions then means
+#: nothing. Both spellings are named, and `both_spellings` extends the same
+#: protection to a caller-supplied list.
+DEFAULT_KEEP_SRC = ["ovos.skills.fallback.ping", "ovos.fallback.ping"]
+
+
+def both_spellings(topics: List[str]) -> List[str]:
+    """Expand each topic to itself plus its migration counterpart.
+
+    A topic outside the migration map expands to itself, so a list that names
+    no migrating topic is returned unchanged.
+    """
+    out = []
+    for topic in topics:
+        if topic not in out:
+            out.append(topic)
+        counterpart = migration_counterpart(topic)
+        if counterpart is not None and counterpart not in out:
+            out.append(counterpart)
+    return out
 DEFAULT_ACTIVATION = []
 DEFAULT_DEACTIVATION = ["intent.service.skills.deactivate"]
 
@@ -2081,6 +2109,7 @@ class End2EndTest:
                 if self.verbose:
                     print(f"✅ got async message '{m}' as expected")
 
+        keep_src = both_spellings(self.keep_original_src)
         for expected, received in zip(self.expected_messages, messages):
             if self.verbose:
                 print(f"💡 Received message: {received.serialize()}")
@@ -2121,7 +2150,7 @@ class End2EndTest:
             if self.test_routing and self.skill_id is None and self.pipeline_id is None:
                 r_src = received.context.get("source")
                 r_dst = received.context.get("destination")
-                if expected.msg_type in self.keep_original_src:
+                if expected.msg_type in keep_src:
                     assert o_src == r_src, f"❌ source doesnt match! expected '{o_src}' got '{r_src}'"
                     assert o_dst == r_dst, f"❌ destination doesnt match! expected '{o_dst}' got '{r_dst}'"
                 else:
