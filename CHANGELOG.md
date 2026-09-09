@@ -390,10 +390,6 @@
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.19.4a1...0.20.0a1)
 
-**Merged pull requests:**
-
-- feat: assert\_template\_shown for SYSTEM\_\* GUI templates [\#83](https://github.com/OpenVoiceOS/ovoscope/pull/83) ([JarbasAl](https://github.com/JarbasAl))
-
 ## [0.19.4a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.19.4a1) (2026-06-17)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.19.3a1...0.19.4a1)
