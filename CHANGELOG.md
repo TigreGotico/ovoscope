@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.8.2a1](https://github.com/OpenVoiceOS/ovoscope/tree/1.8.2a1) (2026-09-09)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/1.8.1a1...1.8.2a1)
+
+**Merged pull requests:**
+
+- fix: warn instead of raising when a helper is called without skill\_id [\#190](https://github.com/OpenVoiceOS/ovoscope/pull/190) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [1.8.1a1](https://github.com/OpenVoiceOS/ovoscope/tree/1.8.1a1) (2026-09-07)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/1.8.0a1...1.8.1a1)
@@ -388,10 +396,6 @@
 ## [0.19.3a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.19.3a1) (2026-06-17)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.19.2a1...0.19.3a1)
-
-**Merged pull requests:**
-
-- fix\(tts-intelligibility\): transcode non-WAV engine output before scoring [\#79](https://github.com/OpenVoiceOS/ovoscope/pull/79) ([JarbasAl](https://github.com/JarbasAl))
 
 ## [0.19.2a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.19.2a1) (2026-06-16)
 
