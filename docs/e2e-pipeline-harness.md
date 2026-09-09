@@ -119,12 +119,19 @@ directly.
 | `detach_intent(bus, intent_name, *, skill_id, settle=0.1)` | any | `detach_intent` |
 | `detach_skill(bus, skill_id, *, settle=0.1)` | any | `detach_skill` |
 
-`skill_id` is required (except on `detach_skill`, which already takes it as
-its positional argument): every shim stamps `Message.context["skill_id"]`
-so OVOS-INTENT-4 §3.1/§3.2-conformant plugins accept the registration and
-`detach_skill` can find it again. There is no fallback derived from `name`
-or `entity_type` — Adapt vocab/intent names are conventionally unscoped, so
+Pass `skill_id` on every call. `detach_skill` already takes it as its
+positional argument. Each shim stamps `Message.context["skill_id"]` so
+OVOS-INTENT-4 §3.1/§3.2-conformant plugins accept the registration and
+`detach_skill` can find it again. No fallback is derived from `name` or
+`entity_type`. Adapt vocab and intent names are conventionally unscoped, so
 guessing a `skill_id` from them would be wrong more often than not.
+
+A call that omits it emits the message unattributed and logs one warning
+naming the release the argument becomes required in. Unattributed is a poor
+state to register in, because the plugin cannot deregister by skill and a
+conformance suite cannot tell one caller's intents from another's. It is
+also the state a suite written against an earlier ovoscope already had, and
+breaking that suite tells its author nothing they can act on.
 
 Every shim sleeps `settle` seconds after emitting (default `0.1`) to give
 the pipeline plugin time to process the registration before the caller

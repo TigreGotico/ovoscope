@@ -757,13 +757,20 @@ class TestE2EHelpersOnAFakeBus(unittest.TestCase):
             [m.data["entity_value"] for m in vocab], ["apple", "pear"])
         self.assertTrue(all(m.data["entity_type"] == "Fruit" for m in vocab))
 
-    def test_register_adapt_vocab_requires_skill_id(self):
-        # Unscoped Adapt vocab names ("Fruit") carry no skill_id to derive —
-        # omitting the keyword must fail loud, not register ownerless.
+    def test_register_adapt_vocab_without_skill_id_registers_ownerless(self):
+        # Unscoped Adapt vocab names ("Fruit") carry no skill_id to derive,
+        # so the vocab registers ownerless and detach_skill can never remove
+        # it. That is worth a warning, not a TypeError that breaks a suite
+        # written against an earlier ovoscope.
+        from unittest.mock import patch
+
         from ovoscope.e2e import register_adapt_vocab
 
-        with self.assertRaises(TypeError):
+        with patch("ovoscope.e2e.LOG.warning") as warn:
             register_adapt_vocab(self.bus, "Fruit", ["apple"], settle=0)
+        self.assertIn("skill_id", warn.call_args[0][0])
+        vocab = [m for m in self.seen if m.msg_type == "register_vocab"]
+        self.assertNotIn("skill_id", vocab[0].context)
 
     def test_register_adapt_intent_round_trip(self):
         pytest.importorskip("adapt")

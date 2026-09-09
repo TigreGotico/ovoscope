@@ -100,12 +100,15 @@ class TestRegistrationShims(unittest.TestCase):
         )
         self.assertEqual(self.captured[0].context["skill_id"], "sk")
 
-    def test_register_padatious_intent_requires_skill_id(self):
-        # OVOS-INTENT-4 §3.1/§3.2: no derivation fallback — omitting the
-        # keyword is a caller bug, not a message ovoscope silently sends
-        # unattributed.
-        with self.assertRaises(TypeError):
+    def test_register_padatious_intent_without_skill_id_warns(self):
+        # OVOS-INTENT-4 §3.1/§3.2: there is no derivation fallback, so the
+        # message goes out unattributed rather than being given an invented
+        # owner. Omitting the keyword is a caller bug and says so, but it
+        # does not break a suite written against an earlier ovoscope.
+        with patch("ovoscope.e2e.LOG.warning") as warn:
             register_padatious_intent(self.bus, "sk:hi", ["hi"], settle=0.0)
+        self.assertIn("skill_id", warn.call_args[0][0])
+        self.assertNotIn("skill_id", self.captured[0].context)
 
     def test_register_padatious_entity_emits_event(self):
         register_padatious_entity(
@@ -120,9 +123,11 @@ class TestRegistrationShims(unittest.TestCase):
         )
         self.assertEqual(self.captured[0].context["skill_id"], "sk")
 
-    def test_register_padatious_entity_requires_skill_id(self):
-        with self.assertRaises(TypeError):
+    def test_register_padatious_entity_without_skill_id_warns(self):
+        with patch("ovoscope.e2e.LOG.warning") as warn:
             register_padatious_entity(self.bus, "item", ["milk"], settle=0.0)
+        self.assertIn("skill_id", warn.call_args[0][0])
+        self.assertNotIn("skill_id", self.captured[0].context)
 
     def test_register_adapt_vocab_emits_one_event_per_word(self):
         register_adapt_vocab(
@@ -141,13 +146,17 @@ class TestRegistrationShims(unittest.TestCase):
         )
         self.assertEqual(self.captured[0].context["skill_id"], "sk")
 
-    def test_register_adapt_vocab_requires_skill_id(self):
+    def test_register_adapt_vocab_without_skill_id_warns_once(self):
         # Adapt vocab names are conventionally unscoped ("Fruit", "greeting")
-        # so there is nothing to derive a skill_id from — the caller MUST
-        # supply one or the vocab registers ownerless and detach_skill can
-        # never remove it.
-        with self.assertRaises(TypeError):
-            register_adapt_vocab(self.bus, "Fruit", ["apple"], settle=0.0)
+        # so there is nothing to derive a skill_id from: the vocab registers
+        # ownerless and detach_skill can never remove it. One warning covers
+        # the whole call, not one per word.
+        with patch("ovoscope.e2e.LOG.warning") as warn:
+            register_adapt_vocab(self.bus, "Fruit", ["apple", "pear"],
+                                 settle=0.0)
+        self.assertEqual(warn.call_count, 1)
+        for message in self.captured:
+            self.assertNotIn("skill_id", message.context)
 
     def test_detach_helpers(self):
         detach_intent(self.bus, "sk:hi", skill_id="sk", settle=0.0)
@@ -160,9 +169,11 @@ class TestRegistrationShims(unittest.TestCase):
         detach_intent(self.bus, "sk:hi", skill_id="sk", settle=0.0)
         self.assertEqual(self.captured[0].context["skill_id"], "sk")
 
-    def test_detach_intent_requires_skill_id(self):
-        with self.assertRaises(TypeError):
+    def test_detach_intent_without_skill_id_warns(self):
+        with patch("ovoscope.e2e.LOG.warning") as warn:
             detach_intent(self.bus, "sk:hi", settle=0.0)
+        self.assertIn("skill_id", warn.call_args[0][0])
+        self.assertNotIn("skill_id", self.captured[0].context)
 
     def test_detach_skill_stamps_context_skill_id(self):
         # This is the message ``E2EPipelineHarness.setUp()`` emits to isolate
