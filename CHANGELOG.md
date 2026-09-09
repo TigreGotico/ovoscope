@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.8.3a1](https://github.com/OpenVoiceOS/ovoscope/tree/1.8.3a1) (2026-09-09)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/1.8.2a1...1.8.3a1)
+
+**Merged pull requests:**
+
+- fix: the keep-src rule holds under either spelling of a topic [\#191](https://github.com/OpenVoiceOS/ovoscope/pull/191) ([JarbasAl](https://github.com/JarbasAl))
+- fix: tie the trained wait to the trainer's own state [\#189](https://github.com/OpenVoiceOS/ovoscope/pull/189) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [1.8.2a1](https://github.com/OpenVoiceOS/ovoscope/tree/1.8.2a1) (2026-09-09)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/1.8.1a1...1.8.2a1)
@@ -388,10 +397,6 @@
 ## [0.19.4a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.19.4a1) (2026-06-17)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.19.3a1...0.19.4a1)
-
-**Merged pull requests:**
-
-- fix\(tts-intelligibility\): normalise rendered audio to 16kHz mono before STT [\#81](https://github.com/OpenVoiceOS/ovoscope/pull/81) ([JarbasAl](https://github.com/JarbasAl))
 
 ## [0.19.3a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.19.3a1) (2026-06-17)
 
