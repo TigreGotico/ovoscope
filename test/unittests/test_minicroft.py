@@ -1,6 +1,7 @@
 """Unit tests for MiniCroft and get_minicroft()."""
 import os
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -11,6 +12,7 @@ from ovos_workshop.skills.ovos import OVOSSkill
 
 from ovos_bus_client.session import SessionManager
 
+from ovoscope import _wait_for_trained, _pending_trainers, _trainers
 from ovoscope import (MiniCroft, get_minicroft, DEFAULT_TEST_PIPELINE,
                       LIGHT_TEST_PIPELINE, ADAPT_PIPELINE, LEAN_DEFAULT_PIPELINE,
                       M2V_PIPELINE, PERSONA_PIPELINE, is_pipeline_available)
@@ -556,15 +558,23 @@ class TestTrainedQuietWindow(unittest.TestCase):
     def tearDown(self):
         LOG.set_level("CRITICAL")
 
+    @patch.dict("os.environ", {"OVOSCOPE_TRAINED_TIMEOUT": "5"})
     def test_no_intents_registered_skips_wait(self):
-        """Nothing registered an intent -> get_minicroft must not wait on
-        'mycroft.skills.trained' at all (mirrors padatious' needs_compile:
-        nothing to train, nothing to wait for)."""
+        """Nothing registered an intent -> get_minicroft must not spend the
+        bound waiting on 'mycroft.skills.trained' (mirrors padatious'
+        needs_compile: nothing to train, nothing to wait for). Timed rather
+        than counting bus events: a trainer with empty containers may report
+        a pass anyway, and whether that report lands before the boot returns
+        is a race, not a contract."""
         skill_id = "ovoscope-unittest-no-intents.test"
+        started = time.time()
         mc = get_minicroft([skill_id], extra_skills={skill_id: PingSkill})
+        elapsed = time.time() - started
         try:
             self.assertEqual(mc._registered_skill_ids, set())
-            self.assertEqual(mc._trained_times, [])
+            self.assertLess(elapsed, 5.0,
+                            "boot spent the trained bound waiting for a "
+                            "training pass that was never needed")
         finally:
             mc.stop()
 
@@ -577,7 +587,10 @@ class TestTrainedQuietWindow(unittest.TestCase):
                            extra_skills={skill_id: RegistersAndTrainsSkill})
         try:
             self.assertEqual(mc._registered_skill_ids, {skill_id})
-            self.assertEqual(len(mc._trained_times), 1)
+            self.assertTrue(mc._trained_times,
+                            "no 'mycroft.skills.trained' was recorded")
+            self.assertEqual(_pending_trainers(mc), [],
+                             "returned with a trainer still holding work")
         finally:
             mc.stop()
 
@@ -805,3 +818,118 @@ class TestTrainedTimeoutDefaults(unittest.TestCase):
             timeout = float(timeout_str) if timeout_str else None
             self.assertEqual(timeout, 120.0,
                              "OVOSCOPE_TRAINED_TIMEOUT env var should be respected")
+
+
+class _StubContainer:
+    def __init__(self, needs_compile=False):
+        self.needs_compile = needs_compile
+
+
+class _StubTrainer:
+    """The trainer protocol ovos_padatious.opm exposes: an Event that is
+    clear while a training pass runs and set when it ends, and per-language
+    containers reporting whether they still need compiling."""
+
+    def __init__(self, needs_compile=False):
+        self.finished_training_event = threading.Event()
+        self.finished_training_event.set()
+        self.containers = {"en-US": _StubContainer(needs_compile)}
+        self._compile_giveup = set()
+
+
+class _StubCroft:
+    def __init__(self, trainers):
+        self._training_lock = threading.Lock()
+        self._trained_times = []
+        self._registered_skill_ids = {"stub.skill"}
+
+        class _Intents:
+            pipeline_plugins = trainers
+        self.intents = _Intents()
+
+    def trained(self):
+        with self._training_lock:
+            self._trained_times.append(time.time())
+
+
+class TestTrainedWaitIsCompletionTied(unittest.TestCase):
+    """The timeout bounds silence from an idle trainer, never a training pass
+    that is still running: a big skill on a loaded host is waited for."""
+
+    @patch.dict("os.environ", {"OVOSCOPE_TRAINED_TIMEOUT": "0.3"})
+    def test_a_pass_longer_than_the_timeout_is_waited_for(self):
+        trainer = _StubTrainer()
+        croft = _StubCroft({"stub-pipeline": trainer})
+        trainer.finished_training_event.clear()
+
+        def finish():
+            time.sleep(0.9)
+            trainer.finished_training_event.set()
+            croft.trained()
+
+        threading.Thread(target=finish, daemon=True).start()
+        started = time.time()
+        _wait_for_trained(croft, {"stub.skill"})
+        self.assertGreaterEqual(time.time() - started, 0.9)
+        self.assertEqual(len(croft._trained_times), 1)
+
+    @patch.dict("os.environ", {"OVOSCOPE_TRAINED_TIMEOUT": "0.3"})
+    def test_an_idle_trainer_that_never_reports_still_raises(self):
+        croft = _StubCroft({"stub-pipeline": _StubTrainer()})
+        with self.assertRaises(RuntimeError) as ctx:
+            _wait_for_trained(croft, {"stub.skill"})
+        self.assertIn("stub.skill", str(ctx.exception))
+
+    @patch.dict("os.environ", {"OVOSCOPE_TRAINED_TIMEOUT": "0.2",
+                               "OVOSCOPE_TRAINED_MAX": "0.5"})
+    def test_a_pass_that_never_ends_hits_the_hard_cap(self):
+        trainer = _StubTrainer()
+        trainer.finished_training_event.clear()
+        croft = _StubCroft({"stub-pipeline": trainer})
+        started = time.time()
+        with self.assertRaises(RuntimeError) as ctx:
+            _wait_for_trained(croft, {"stub.skill"})
+        self.assertLess(time.time() - started, 2.0)
+        self.assertIn("stub-pipeline", str(ctx.exception))
+
+    def test_pending_trainers_are_read_from_the_pipeline_plugins(self):
+        busy, idle = _StubTrainer(), _StubTrainer()
+        busy.finished_training_event.clear()
+        croft = _StubCroft({"busy": busy, "idle": idle, "adapt": object()})
+        self.assertEqual(_pending_trainers(croft), ["busy"])
+
+    def test_a_dirty_container_is_pending_before_the_pass_starts(self):
+        """train() hands the work to a background thread and returns, so
+        between the request and the worker picking it up the event is still
+        set. needs_compile is what says the work exists."""
+        trainer = _StubTrainer(needs_compile=True)
+        croft = _StubCroft({"stub-pipeline": trainer})
+        self.assertTrue(trainer.finished_training_event.is_set())
+        self.assertEqual(_pending_trainers(croft), ["stub-pipeline"])
+
+    def test_a_container_the_plugin_gave_up_on_is_not_pending(self):
+        trainer = _StubTrainer(needs_compile=True)
+        trainer._compile_giveup.add("en-US")
+        croft = _StubCroft({"stub-pipeline": trainer})
+        self.assertEqual(_pending_trainers(croft), [])
+
+    def test_trainers_are_found_without_a_bus_subscription(self):
+        croft = _StubCroft({"stub-pipeline": _StubTrainer(), "adapt": object()})
+        self.assertEqual(sorted(_trainers(croft)), ["stub-pipeline"])
+
+    @patch.dict("os.environ", {"OVOSCOPE_TRAINED_TIMEOUT": "0.3"})
+    def test_a_container_compiling_late_is_waited_for(self):
+        """The registration that dirties the container can arrive after the
+        wait is entered; the wait must not end while it is outstanding."""
+        trainer = _StubTrainer(needs_compile=True)
+        croft = _StubCroft({"stub-pipeline": trainer})
+
+        def finish():
+            time.sleep(0.9)
+            trainer.containers["en-US"].needs_compile = False
+            croft.trained()
+
+        threading.Thread(target=finish, daemon=True).start()
+        started = time.time()
+        _wait_for_trained(croft, {"stub.skill"})
+        self.assertGreaterEqual(time.time() - started, 0.9)

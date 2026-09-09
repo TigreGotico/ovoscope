@@ -133,9 +133,9 @@ to train (pure event-handler skills, an empty `skill_ids`) skip the wait,
 and so does a boot whose pipeline has no such subscriber — for example
 `default_pipeline=M2V_PIPELINE` or an adapt-only pipeline — since nothing
 will ever report training done. If an intent was registered, a subscriber
-is present, and training never completes within `OVOSCOPE_TRAINED_TIMEOUT`
-seconds (default: 180s when the `CI` environment variable is set, 5s
-otherwise), `get_minicroft()` raises `RuntimeError` naming only the
+is present, and no `mycroft.skills.trained` arrives within
+`OVOSCOPE_TRAINED_TIMEOUT` seconds (default 180s) of the trainer going idle,
+`get_minicroft()` raises `RuntimeError` naming only the
 skill(s) that registered an intent and never got a `mycroft.skills.trained`
 reply — a stuck trainer in one skill never blames an unrelated, intentless
 skill loaded alongside it. Pass `wait_for_trained=False` to opt out.
@@ -183,11 +183,11 @@ croft = get_minicroft(
 )
 ```
 
-When testing with N secondary languages, training overhead scales with the number of per-language containers — for example, a 17-locale suite may require 129 seconds for unconstrained training (on a system without resource limits). `max_wait` bounds only the wait for `READY`; it has no effect on the training wait that follows. The training wait is bounded by `OVOSCOPE_TRAINED_TIMEOUT`, and its default (180s under `CI`, 5s otherwise) is tuned for single-language loads. For multilingual suites, set `OVOSCOPE_TRAINED_TIMEOUT` large enough to accommodate all language engines, and raise `max_wait` too if reaching `READY` itself is slow with that many engines starting up:
+When testing with N secondary languages, training overhead scales with the number of per-language containers — for example, a 17-locale suite may require 129 seconds for unconstrained training (on a system without resource limits). `max_wait` bounds only the wait for `READY`; it has no effect on the training wait that follows. The training wait is completion-tied: `OVOSCOPE_TRAINED_TIMEOUT` (default 180s) bounds silence from an idle trainer, and while a pipeline plugin reports a pass in flight through its `finished_training_event` the bound is pushed forward, so a long multilingual pass is waited for rather than declared stuck. `OVOSCOPE_TRAINED_MAX` (default 600s) caps the whole wait. Raise `max_wait` if reaching `READY` itself is slow with many engines starting up, and raise `OVOSCOPE_TRAINED_MAX` for a suite whose full training pass is known to exceed ten minutes:
 
 ```python
 import os
-os.environ["OVOSCOPE_TRAINED_TIMEOUT"] = "300"  # per-language training can be slow
+os.environ["OVOSCOPE_TRAINED_MAX"] = "1200"  # a 17-locale pass under coverage can exceed the cap
 croft = get_minicroft(
     ["my-skill.openvoiceos"],
     secondary_langs=["en-US", "pt-PT", "de-DE", "es-ES", "fr-FR"],
@@ -195,12 +195,12 @@ croft = get_minicroft(
 )
 ```
 
-The test suite itself can then settle to a quiet window using the same pattern `ovos-skill-alerts` uses for its multilingual fixtures: set `OVOSCOPE_TRAINED_TIMEOUT` with margin so all per-language training completes before assertions run.
+The test suite itself can then settle to a quiet window using the same pattern `ovos-skill-alerts` uses for its multilingual fixtures: the wait itself follows the trainer, so per-language training completes before assertions run.
 
 ---
 ## pytest-timeout Convention
 
-Any test suite using `get_minicroft` must set `pytest-timeout` comfortably above the `get_minicroft` trained-wait ceiling. On slow 2-core CI runners, a pytest-timeout that equals or falls below the trained-wait ceiling can kill the `setUpClass` or `setUp` mid-training-wait before `get_minicroft` returns, and the failure masquerades as a boot failure rather than a timeout — diagnosis is difficult without knowing to check the framework timeout separately. Set `pytest-timeout` to at least `trained-ceiling + 120s` with margin: for single-language suites with the 180-second CI default, use 300 seconds or more; for multilingual suites, set `pytest-timeout ≥ max_wait + 120s` to ensure the wait completes before the framework timeout fires.
+Any test suite using `get_minicroft` must set `pytest-timeout` above the trained wait's own ceiling, and that ceiling is the sum of two bounds rather than either alone. `OVOSCOPE_TRAINED_MAX` caps the whole wait at 600 seconds by default, and `OVOSCOPE_TRAINED_TIMEOUT` allows a further 180 seconds of silence after it, so the worst case a consumer can see is 780 seconds. A `pytest-timeout` below that kills `setUpClass` or `setUp` mid-wait, and the failure reads as a boot failure rather than as a timeout, which is difficult to diagnose without knowing to check the framework timeout separately. Set `pytest-timeout` to at least 900 seconds, or lower both environment variables together and set it above their sum plus a margin.
 
 ---
 ## Pipeline Plugin Config Overrides
