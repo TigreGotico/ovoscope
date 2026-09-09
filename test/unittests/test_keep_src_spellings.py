@@ -8,14 +8,12 @@ when the deployment uses the other name, so a capture stays green while
 asserting something different.
 """
 import unittest
-from unittest.mock import patch
 
 from ovos_bus_client.message import Message
 from ovos_bus_client.session import Session
 from ovos_utils.log import LOG
 from ovos_workshop.skills.ovos import OVOSSkill
 
-import ovoscope
 from ovoscope import (DEFAULT_KEEP_SRC, End2EndTest, both_spellings,
                       get_minicroft)
 
@@ -73,10 +71,9 @@ class TestBothSpellings(unittest.TestCase):
 class TestTheRuleReachesTheComparison(unittest.TestCase):
     """The expansion is only worth anything if the comparison loop reads it.
 
-    The unit tests above pin what `both_spellings` returns. This one pins that
-    `End2EndTest` runs the caller's own `keep_original_src` through it rather
-    than using the list verbatim, which is the wiring a refactor can drop
-    without any of them noticing.
+    The unit tests above pin what `both_spellings` returns. This one pins the
+    outcome: a rule naming one spelling accepts the reply under the other,
+    which a comparison reading the caller's list verbatim does not.
     """
 
     SKILL_ID = "ovoscope-unittest-keepsrc.test"
@@ -90,31 +87,35 @@ class TestTheRuleReachesTheComparison(unittest.TestCase):
         self.mc.stop()
         LOG.set_level("CRITICAL")
 
-    def test_the_callers_rule_is_expanded_before_it_is_compared(self):
-        seen = []
-        real = ovoscope.both_spellings
-
-        def spy(topics):
-            result = real(topics)
-            seen.append((list(topics), list(result)))
-            return result
-
-        rule = ["ovos.skills.fallback.ping"]
+    def _run(self, rule):
+        """One echo round with an entry point on the source message, so the
+        rolling expectation flips to (B, A) while every later message still
+        carries the original (A, B). The skill's reply reaches the bus under
+        the canonical spelling, so only the keep-src branch accepts it."""
         src = Message("unittest.echo", {"text": "hi"},
                       {"session": Session("keepsrc-session").serialize(),
                        "source": "A", "destination": "B"})
-        test = End2EndTest(
+        End2EndTest(
             minicroft=self.mc, skill_ids=[self.SKILL_ID],
-            source_message=src, expected_messages=[src],
+            source_message=src,
+            expected_messages=[src, Message("ovos.utterance.speak")],
+            entry_points=["unittest.echo"],
             keep_original_src=rule,
-            test_message_number=False, test_msg_type=False,
+            test_message_number=False, test_msg_type=True,
             test_msg_data=False, test_msg_context=False,
             test_routing=True, test_active_skills=False,
             test_final_session=False, test_async_messages=False,
-            test_async_message_number=False, verbose=False)
-        with patch.object(ovoscope, "both_spellings", spy):
-            test.execute(timeout=10)
+            test_async_message_number=False, verbose=False,
+        ).execute(timeout=10)
 
-        self.assertIn(
-            (rule, ["ovos.skills.fallback.ping", "ovos.fallback.ping"]), seen,
-            "the comparison never saw the expanded rule")
+    def test_the_callers_rule_decides_the_comparison_under_the_other_spelling(self):
+        # the scenario discriminates: with no rule the rolling branch is
+        # taken and the reply's original routing fails it
+        with self.assertRaises(AssertionError):
+            self._run([])
+        # naming the spelling that actually arrives passes either way
+        self._run(["ovos.utterance.speak"])
+        # naming only the legacy spelling passes solely because the rule is
+        # expanded before the membership test; a comparison that reads the
+        # caller's list verbatim takes the rolling branch and fails
+        self._run(["speak"])
