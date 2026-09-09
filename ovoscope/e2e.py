@@ -26,7 +26,32 @@ from typing import Any, ClassVar, Dict, List, Optional
 from ovos_bus_client.message import Message
 from ovos_bus_client.session import Session
 from ovos_config.config import Configuration
+from ovos_utils.log import LOG
 
+from ovoscope.version import VERSION_MAJOR, VERSION_MINOR
+
+
+def _stamp_skill_id(msg: Message, skill_id: Optional[str]) -> None:
+    """Stamp the registration's provenance when the caller gave one."""
+    if skill_id is not None:
+        msg.context["skill_id"] = skill_id
+
+
+def _warn_unattributed(helper: str, msg_type: str) -> None:
+    """Say once why a registration carries no skill attribution.
+
+    Without ``skill_id`` in its context a registration cannot be attributed
+    to a skill, so a pipeline plugin cannot deregister it by skill and a
+    conformance suite cannot tell one caller's intents from another's. The
+    argument is required in every new call; a caller that omits it gets the
+    unattributed message it asked for, and one warning saying so.
+    """
+    LOG.warning(
+        f"ovoscope.e2e.{helper}() was called without skill_id, so "
+        f"'{msg_type}' carries no skill attribution and cannot be "
+        f"deregistered by skill. Pass skill_id=; the argument becomes "
+        f"required in {VERSION_MAJOR}.{VERSION_MINOR + 1}.0."
+    )
 
 # ---------------------------------------------------------------------------
 # Standalone bus helpers (work with any FakeBus / MessageBusClient)
@@ -161,46 +186,54 @@ def wait_for_failure(bus, *, timeout: float = 2.0) -> bool:
 # Adapt family (adapt, palavreado, …) — registers vocab + IntentBuilder.
 
 def register_padatious_intent(
-    bus, name: str, samples: List[str], *, skill_id: str, lang: str = "en-US",
+    bus, name: str, samples: List[str], *, skill_id: Optional[str] = None,
+    lang: str = "en-US",
     settle: float = 0.1,
 ) -> None:
     msg = Message("padatious:register_intent", {
         "name": name, "samples": samples, "lang": lang,
     })
-    msg.context["skill_id"] = skill_id
+    _stamp_skill_id(msg, skill_id)
+    if skill_id is None:
+        _warn_unattributed("register_padatious_intent", msg.msg_type)
     bus.emit(msg)
     if settle:
         time.sleep(settle)
 
 
 def register_padatious_entity(
-    bus, name: str, samples: List[str], *, skill_id: str, lang: str = "en-US",
+    bus, name: str, samples: List[str], *, skill_id: Optional[str] = None,
+    lang: str = "en-US",
     settle: float = 0.1,
 ) -> None:
     msg = Message("padatious:register_entity", {
         "name": name, "samples": samples, "lang": lang,
     })
-    msg.context["skill_id"] = skill_id
+    _stamp_skill_id(msg, skill_id)
+    if skill_id is None:
+        _warn_unattributed("register_padatious_entity", msg.msg_type)
     bus.emit(msg)
     if settle:
         time.sleep(settle)
 
 
 def register_adapt_vocab(
-    bus, entity_type: str, words: List[str], *, skill_id: str,
+    bus, entity_type: str, words: List[str], *, skill_id: Optional[str] = None,
     lang: str = "en-US", settle: float = 0.1,
 ) -> None:
+    if skill_id is None:
+        _warn_unattributed("register_adapt_vocab", "register_vocab")
     for word in words:
         msg = Message("register_vocab", {
             "entity_value": word, "entity_type": entity_type, "lang": lang,
         })
-        msg.context["skill_id"] = skill_id
+        _stamp_skill_id(msg, skill_id)
         bus.emit(msg)
     if settle:
         time.sleep(settle)
 
 
-def register_adapt_intent(bus, builder, *, skill_id: str,
+def register_adapt_intent(bus, builder, *, skill_id: Optional[str] = None,
                           lang: str = "en-US", settle: float = 0.1) -> None:
     """Register an Adapt intent.
 
@@ -210,16 +243,20 @@ def register_adapt_intent(bus, builder, *, skill_id: str,
     intent = builder.build() if hasattr(builder, "build") else builder
     msg = Message("register_intent", intent.__dict__)
     msg.context["lang"] = lang
-    msg.context["skill_id"] = skill_id
+    _stamp_skill_id(msg, skill_id)
+    if skill_id is None:
+        _warn_unattributed("register_adapt_intent", msg.msg_type)
     bus.emit(msg)
     if settle:
         time.sleep(settle)
 
 
-def detach_intent(bus, intent_name: str, *, skill_id: str,
+def detach_intent(bus, intent_name: str, *, skill_id: Optional[str] = None,
                   settle: float = 0.1) -> None:
     msg = Message("detach_intent", {"intent_name": intent_name})
-    msg.context["skill_id"] = skill_id
+    _stamp_skill_id(msg, skill_id)
+    if skill_id is None:
+        _warn_unattributed("detach_intent", msg.msg_type)
     bus.emit(msg)
     if settle:
         time.sleep(settle)
