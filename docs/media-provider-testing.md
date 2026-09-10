@@ -1,7 +1,7 @@
 # MediaProvider (Search) Testing with ovoscope
 
 `MediaProviderHarness` (`ovoscope.media_provider`) tests `opm.media.provider`
-plugins — the in-process **catalog/search** providers introduced by the
+plugins: the in-process **catalog/search** providers introduced by the
 ovos-media sprint to replace OCP search skills. It is the search-side counterpart
 to [`OCPPlayerHarness`](media-testing.md), which drives the *player*.
 
@@ -45,7 +45,7 @@ h.assert_not_routes(Signals(medium=MediaType.MUSIC),
                     QueryContext(supported_playback_types={"video"}))  # audio-only provider
 h.assert_not_routes(Signals(medium=MediaType.MOVIE))
 
-# the never-raising search the pipeline calls — ranked, playable results
+# the never-raising search the pipeline calls: ranked, playable results
 releases = h.assert_returns_playables(Signals(title="worms"))
 assert all(r.uri.startswith("library://") for r in releases)
 ```
@@ -55,7 +55,7 @@ assert all(r.uri.startswith("library://") for r in releases)
 | Constructor | Use |
 |---|---|
 | `MediaProviderHarness.from_entrypoint(name, config=None, group="opm.media.provider", mock_api=None, api_attr="_api")` | Discover the provider through its installed entry-point (the real e2e). Raises `AssertionError` if the entry-point is missing or ambiguous. |
-| `MediaProviderHarness.from_class(provider_cls, config=None, mock_api=None, api_attr="_api")` | Wrap a class you already hold (no packaging needed) — handy for unit tests. |
+| `MediaProviderHarness.from_class(provider_cls, config=None, mock_api=None, api_attr="_api")` | Wrap a class you already hold (no packaging needed): handy for unit tests. |
 
 `mock_api` is set onto `provider.<api_attr>` (default `_api`) to bypass the lazy,
 network-backed client a provider builds on first use.
@@ -91,7 +91,10 @@ Thin pass-throughs mirroring the `MediaProvider` contract:
 
 ## Cross-references
 
-- `MediaProvider` / `QueryContext` — `ovos_plugin_manager.templates.media_provider`
-- `Signals`, `Release`, `MediaType` — `mediavocab`
-- Player-side harness — [media-testing.md](media-testing.md)
-- OCP *search skill* testing (legacy stack) — [ocp.md](ocp.md)
+- `MediaProvider` / `QueryContext` (`ovos_plugin_manager.templates.media_provider`)
+- `Signals`, `Release`, `MediaType` (`mediavocab`)
+- Player-side harness: [media-testing.md](media-testing.md)
+- OCP *search skill* testing (legacy stack): [ocp.md](ocp.md)
+
+---
+[← Media Testing](media-testing.md) · [Home](../README.md) · [OCP →](ocp.md)

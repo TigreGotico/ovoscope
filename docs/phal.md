@@ -24,13 +24,13 @@ device access is required.
 Plugins that require physical hardware are **not suitable** for in-process
 testing and should use hardware-in-the-loop integration tests instead:
 
-- `ovos-PHAL-plugin-alsa` — requires ALSA audio subsystem
-- `ovos-PHAL-plugin-mk1` — requires Mark 1 hardware
-- `ovos-PHAL-plugin-dotstar` — requires APA102 LED ring
+- `ovos-PHAL-plugin-alsa`: requires ALSA audio subsystem
+- `ovos-PHAL-plugin-mk1`: requires Mark 1 hardware
+- `ovos-PHAL-plugin-dotstar`: requires APA102 LED ring
 
-## `MiniPHAL` — Context Manager
+## `MiniPHAL`: Context Manager
 
-`MiniPHAL` — `ovoscope/phal.py:43`
+`MiniPHAL`: `ovoscope/phal.py`
 
 ```python
 from ovos_utils.messagebus import Message
@@ -54,16 +54,16 @@ with MiniPHAL(
 
 ### Methods
 
-`MiniPHAL.emit` — `ovoscope/phal.py:146`
+`MiniPHAL.emit`: `ovoscope/phal.py`
 
 | Method | Description |
 |--------|-------------|
 | `emit(msg, wait=0.05)` | Emit `msg` on the internal bus then sleep `wait` seconds so async handlers have time to fire before the next assertion. Set `wait=0` to disable the sleep. |
-| `assert_emitted(msg_type, timeout=2.0)` | Poll captured messages up to `timeout` seconds; return the first matching `Message`. Raises `AssertionError` on timeout. — `ovoscope/phal.py:157` |
-| `assert_not_emitted(msg_type, wait=0.2)` | Sleep `wait` seconds then assert no captured message has `msg_type`. Raises `AssertionError` if one was captured. — `ovoscope/phal.py:184` |
-| `clear_captured()` | Clear the captured message list. Useful between sequential assertions in the same `with` block. — `ovoscope/phal.py:203` |
+| `assert_emitted(msg_type, timeout=2.0)` | Poll captured messages up to `timeout` seconds; return the first matching `Message`. Raises `AssertionError` on timeout.: `ovoscope/phal.py` |
+| `assert_not_emitted(msg_type, wait=0.2)` | Sleep `wait` seconds then assert no captured message has `msg_type`. Raises `AssertionError` if one was captured.: `ovoscope/phal.py` |
+| `clear_captured()` | Clear the captured message list. Useful between sequential assertions in the same `with` block.: `ovoscope/phal.py` |
 
-#### `emit(wait=...)` — settling delay
+#### `emit(wait=...)`: settling delay
 
 The `wait` parameter (default `0.05` s) controls how long `MiniPHAL` sleeps
 after calling `bus.emit()`. PHAL plugin handlers may run on a background thread,
@@ -72,7 +72,7 @@ for plugins with higher latency; set `wait=0` to suppress the sleep entirely whe
 the handler is known to be synchronous.
 
 ```python
-# Default — 50 ms settle time
+# Default: 50 ms settle time
 phal.emit(Message("network.connected"))
 
 # Custom settle time (slower plugin)
@@ -82,9 +82,9 @@ phal.emit(Message("system.reboot"), wait=0.5)
 phal.emit(Message("config.get"), wait=0)
 ```
 
-## `PHALTest` — Declarative Style
+## `PHALTest`: Declarative Style
 
-`PHALTest` — `phal.py:PHALTest`
+`PHALTest` (`phal.py:PHALTest`)
 
 ```python
 from ovos_utils.messagebus import Message
@@ -110,3 +110,6 @@ PHALTest(
 | `plugin_instances` | `Dict` | `{}` | Pre-built instances. |
 | `config` | `Dict` | `{}` | Per-plugin config. |
 | `timeout` | `float` | `5.0` | Wait timeout in seconds. |
+
+---
+[← OCP](ocp.md) · [Home](../README.md) · [Listener →](listener.md)

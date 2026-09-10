@@ -5,7 +5,7 @@ assumes familiarity with Python's `unittest` and the OVOS bus message model.
 ## Prerequisites
 Install ovoscope and the skill under test in the same virtual environment:
 ```bash
-# editable installs — recommended during development
+# editable installs: recommended during development
 uv pip install -e ovoscope/ -e Skills/ovos-skill-hello-world/
 # or via PyPI
 pip install ovoscope ovos-skill-hello-world
@@ -32,18 +32,18 @@ python -c "from ovos_plugin_manager.skills import find_skill_plugins; print(list
 | Test session state after an interaction | **ovoscope** |
 | Test multi-turn dialogue (converse / fallback) | **ovoscope** |
 | Test that a skill is blacklisted and does NOT match | **ovoscope** |
-**Rule of thumb**: if you are asserting on *what gets emitted on the bus* — type, order, data, or
-routing — use ovoscope. If you are testing the internal Python logic of a handler in isolation,
+**Rule of thumb**: if you are asserting on *what gets emitted on the bus*: type, order, data, or
+routing: use ovoscope. If you are testing the internal Python logic of a handler in isolation,
 use FakeBus unit tests.
 FakeBus reference:
 ```python
 from ovos_utils.fakebus import FakeBus  # ovos-utils
 ```
 ---
-## Quick Start — Hello World
+## Quick Start: Hello World
 The canonical example skill is `ovos-skill-hello-world.openvoiceos`. It has two intents:
-- **HelloWorldIntent** (Adapt) — triggered by "hello world"
-- **Greetings.intent** (Padatious) — triggered by greetings like "good morning"
+- **HelloWorldIntent** (Adapt): triggered by "hello world"
+- **Greetings.intent** (Padatious): triggered by greetings like "good morning"
 ```python
 import unittest
 from ovos_bus_client.message import Message
@@ -84,10 +84,10 @@ class TestHelloWorldQuickStart(unittest.TestCase):
         )
         test.execute(timeout=10)
 ```
-`test.execute()` raises `AssertionError` on any mismatch. No return value is used — use pytest or
+`test.execute()` raises `AssertionError` on any mismatch. No return value is used: use pytest or
 `unittest.TestCase` assertions normally.
 ---
-## Pattern 1 — Manual Assertion (Adapt Intent Match)
+## Pattern 1: Manual Assertion (Adapt Intent Match)
 Write each expected `Message` explicitly. This is the most readable pattern and the easiest to
 debug.
 ```python
@@ -128,10 +128,10 @@ test = End2EndTest(
 )
 test.execute(timeout=10)
 ```
-Only keys present in `expected.data` and `expected.context` are checked — extra keys in the
+Only keys present in `expected.data` and `expected.context` are checked: extra keys in the
 received message are ignored. This lets you assert on exactly the fields you care about.
 ---
-## Pattern 2 — Padatious Intent Match
+## Pattern 2: Padatious Intent Match
 Padatious uses `.intent` file names as the message type. Restrict the session pipeline to
 Padatious only so Adapt doesn't shadow the match:
 ```python
@@ -168,10 +168,10 @@ test = End2EndTest(
 test.execute(timeout=10)
 ```
 Note: for Padatious the `speak` message's `utterance` key may vary (depends on the dialog file
-randomisation), so omit `"utterance"` from `expected.data` if it is non-deterministic — only
+randomisation), so omit `"utterance"` from `expected.data` if it is non-deterministic: only
 assert on `lang` and `meta`.
 ---
-## Pattern 3 — Recording Mode (Bootstrap Fixtures)
+## Pattern 3: Recording Mode (Bootstrap Fixtures)
 Don't know the exact message sequence yet? Let ovoscope record it for you:
 ```python
 from ovoscope import End2EndTest
@@ -195,14 +195,14 @@ test = End2EndTest.from_message(
 test.save("tests/fixtures/hello_world_adapt.json", anonymize=True)
 ```
 `anonymize=True` (default) strips real location / personal data from the session context before
-saving — safe to commit.
+saving: safe to commit.
 Then in your test suite:
 ```python
 test = End2EndTest.from_path("tests/fixtures/hello_world_adapt.json")
 test.execute(timeout=10)
 ```
 ---
-## Pattern 4 — Replay from JSON Fixture
+## Pattern 4: Replay from JSON Fixture
 Committed JSON fixtures make tests fully self-contained: no network, no live skill discovery, no
 non-determinism in expected messages.
 ```python
@@ -217,10 +217,10 @@ class TestFromFixture(unittest.TestCase):
         test.execute(timeout=10)
 ```
 Note: skills still need to be installed (the JSON stores `skill_ids`, and `execute()` calls
-`get_minicroft()` which loads the real plugin). The fixture stores the expected message sequence
-— not the skill code.
+`get_minicroft()` which loads the real plugin). The fixture stores the expected message sequence,
+not the skill code.
 ---
-## Pattern 5 — Reusing MiniCroft Across Multiple Tests
+## Pattern 5: Reusing MiniCroft Across Multiple Tests
 Creating a `MiniCroft` is expensive (it trains intent models). Reuse it across tests in the same
 class with `setUp` / `tearDown`:
 ```python
@@ -247,7 +247,7 @@ class TestHelloWorldSharedRuntime(unittest.TestCase):
             {"session": session.serialize(), "source": "A", "destination": "B"},
         )
         return End2EndTest(
-            minicroft=self.minicroft,  # pass existing MiniCroft — not managed, not stopped
+            minicroft=self.minicroft,  # pass existing MiniCroft: not managed, not stopped
             skill_ids=[SKILL_ID],
             source_message=message,
             expected_messages=expected_messages,
@@ -287,7 +287,7 @@ When you pass `minicroft=self.minicroft` explicitly, `End2EndTest` sets `managed
 **not** call `minicroft.stop()` at the end of `execute()`. Your `tearDown` is responsible for
 cleanup.
 ---
-## Pattern 6 — Multi-Turn Conversation
+## Pattern 6: Multi-Turn Conversation
 Pass a **list** of `Message` objects as `source_message` to test a dialogue sequence. ovoscope
 emits them in order, propagating session state between turns:
 ```python
@@ -302,7 +302,7 @@ turn1 = Message(
 turn2 = Message(
     "recognizer_loop:utterance",
     {"utterances": ["good morning"], "lang": "en-US"},
-    {"source": "A", "destination": "B"},  # no "session" key — will be filled by ovoscope
+    {"source": "A", "destination": "B"},  # no "session" key: will be filled by ovoscope
 )
 test = End2EndTest(
     skill_ids=[SKILL_ID],
@@ -320,9 +320,9 @@ test = End2EndTest(
 test.execute(timeout=20)
 ```
 Session propagation: if turn 2 has no `"session"` key in context, ovoscope copies the session
-from the last received message — simulating how a real OVOS client propagates session updates.
+from the last received message: simulating how a real OVOS client propagates session updates.
 ---
-## Pattern 7 — Testing Fallback Skills
+## Pattern 7: Testing Fallback Skills
 Fallback skills receive a `"ovos.skills.fallback.ping"` message to probe for a handler, and then
 the main fallback message. The expected sequence is longer than a normal intent match:
 ```python
@@ -344,15 +344,15 @@ test = End2EndTest(
         # ... handler messages ...
         Message("ovos.utterance.handled", {}),
     ],
-    # "ovos.skills.fallback.ping" is in DEFAULT_KEEP_SRC — its routing is checked against
+    # "ovos.skills.fallback.ping" is in DEFAULT_KEEP_SRC: its routing is checked against
     # the original source_message context, not the rolling flip-point tracker
 )
 test.execute(timeout=15)
 ```
-See `DEFAULT_KEEP_SRC` in `ovoscope/__init__.py` — it pre-populates `keep_original_src` so
+See `DEFAULT_KEEP_SRC` in `ovoscope/__init__.py`: it pre-populates `keep_original_src` so
 fallback ping routing is always validated against the original source message context.
 ---
-## Pattern 8 — Session State Validation
+## Pattern 8: Session State Validation
 Use `final_session` and `inject_active` to assert on session state at the end of a test:
 ```python
 from ovos_bus_client.session import Session
@@ -403,7 +403,7 @@ test = End2EndTest(
     test_async_message_number=True,    # assert exactly 1 async message received
 )
 ```
-Async messages are collected in `CaptureSession.async_responses` — they are NOT in the main
+Async messages are collected in `CaptureSession.async_responses`: they are NOT in the main
 `responses` list and are NOT included in `test_message_number` count.
 ---
 ## Disabling Assertions
@@ -420,7 +420,7 @@ Some assertion groups can be turned off individually when a message is noisy or 
 | `test_async_messages` | `True` | Assert async message types |
 | `test_async_message_number` | `True` | Assert async message count |
 | `test_final_session` | `True` | Assert final session state |
-Example — disable data and routing checks for a noisy third-party message:
+Example: disable data and routing checks for a noisy third-party message:
 ```python
 test = End2EndTest(
     ...
@@ -430,11 +430,11 @@ test = End2EndTest(
 ```
 ---
 ## Troubleshooting
-### Timeout — no messages received
+### Timeout: no messages received
 - The skill plugin is not loaded. Verify `find_skill_plugins()` returns your skill ID.
 - The session pipeline is empty or does not include the right plugin. Set
   `session.pipeline = [...]` explicitly.
-- The EOF message (`ovos.utterance.handled`) never fires — check if the intent matched at all
+- The EOF message (`ovos.utterance.handled`) never fires: check if the intent matched at all
   by setting `verbose=True` and inspecting stdout.
 ### Skill not loading
 ```
@@ -457,7 +457,7 @@ entry_points={
 - For Padatious: training happens at `MiniCroft.run()` via `mycroft.skills.train`. If training
   fails silently, check the Padatious model files exist under `~/.local/share/`.
 ### Wrong message count
-Enable `verbose=True` (default) — ovoscope prints every received message with its index. Compare
+Enable `verbose=True` (default): ovoscope prints every received message with its index. Compare
 against the expected list to find the first divergence.
 ### `get_minicroft()` hangs
 `get_minicroft()` polls `croft.status.state` in a tight loop (0.1s sleep). If it hangs
@@ -468,13 +468,13 @@ watch for tracebacks.
 ### Test lifecycle constants
 ```python
 from ovoscope import (
-    DEFAULT_EOF,          # ["ovos.utterance.handled"] — end-of-test trigger
-    DEFAULT_IGNORED,      # ["ovos.skills.settings_changed"] — filtered out
+    DEFAULT_EOF,          # ["ovos.utterance.handled"]: end-of-test trigger
+    DEFAULT_IGNORED,      # ["ovos.skills.settings_changed"]: filtered out
     GUI_IGNORED,          # GUI namespace messages ignored when ignore_gui=True
-    DEFAULT_ENTRY_POINTS, # ["recognizer_loop:utterance"] — routing reset points
-    DEFAULT_FLIP_POINTS,  # [] — routing flip points
-    DEFAULT_KEEP_SRC,     # ["ovos.skills.fallback.ping"] — always check vs original source
-    DEFAULT_ACTIVATION,   # [] — activation check points
+    DEFAULT_ENTRY_POINTS, # ["recognizer_loop:utterance"]: routing reset points
+    DEFAULT_FLIP_POINTS,  # []: routing flip points
+    DEFAULT_KEEP_SRC,     # ["ovos.skills.fallback.ping"]: always check vs original source
+    DEFAULT_ACTIVATION,   # []: activation check points
     DEFAULT_DEACTIVATION, # ["intent.service.skills.deactivate"]
 )
 ```
@@ -490,22 +490,26 @@ from ovoscope import (
     FALLBACK_PIPELINE,     # ["ovos-fallback-pipeline-plugin-high", ...medium, ...low]
     COMMON_QUERY_PIPELINE, # ["ovos-common-query-pipeline-plugin"]
     PERSONA_PIPELINE,      # ["ovos-persona-pipeline-plugin-high", ...low]
-    DEFAULT_TEST_PIPELINE, # all standard stages, no AI/persona/OCP — the default
+    DEFAULT_TEST_PIPELINE, # all standard stages, no AI/persona/OCP: the default
 )
 ```
-`DEFAULT_TEST_PIPELINE` is the default value of `MiniCroft.default_pipeline` when
-`isolate_config=True`.  It excludes persona, Ollama, OCP, and m2v stages, giving fully
-reproducible results regardless of which AI plugins are installed.
+`MiniCroft.default_pipeline` defaults to the narrower `LEAN_DEFAULT_PIPELINE`
+(Stop, Converse, Adapt, Padatious, Padacioso, Fallback — high/medium tiers
+only; see [minicroft.md](minicroft.md#lean-default-pipeline)) — use
+`extra_pipelines=` to add a stage on top of it, or pass `DEFAULT_TEST_PIPELINE`
+explicitly for the wider set including the `-low` tier and Common Query.
+Both exclude persona, Ollama, OCP, and m2v stages, giving fully reproducible
+results regardless of which AI plugins are installed.
 **Composing custom pipelines:**
 ```python
-# Adapt intent only — fastest, no fallback
+# Adapt intent only: fastest, no fallback
 mc = get_minicroft([SKILL_ID], default_pipeline=ADAPT_PIPELINE)
-# Full intent chain with fallback — typical skill testing
+# Full intent chain with fallback: typical skill testing
 mc = get_minicroft([SKILL_ID],
                    default_pipeline=CONVERSE_PIPELINE + ADAPT_PIPELINE + FALLBACK_PIPELINE)
-# Include persona pipeline — when testing AI persona behaviour
+# Include persona pipeline: when testing AI persona behaviour
 mc = get_minicroft([SKILL_ID], default_pipeline=DEFAULT_TEST_PIPELINE + PERSONA_PIPELINE)
-# No override — use whatever the system config says (includes OCP, m2v, etc.)
+# No override: use whatever the system config says (includes OCP, m2v, etc.)
 mc = get_minicroft([SKILL_ID], default_pipeline=None)
 ```
 Sessions created without an explicit `session` in their message context inherit
@@ -513,13 +517,13 @@ Sessions created without an explicit `session` in their message context inherit
 The original pipeline is restored when `mc.stop()` is called.
 **When to use `PERSONA_PIPELINE`:** Only add persona stages when you are explicitly testing
 persona behaviour.  Persona plugins make network calls to AI APIs and are
-non-deterministic — they are intentionally excluded from `DEFAULT_TEST_PIPELINE`.
+non-deterministic: they are intentionally excluded from `DEFAULT_TEST_PIPELINE`.
 ---
 ## See Also
-- [end2end-test.md](end2end-test.md) — full `End2EndTest` parameter reference
-- [minicroft.md](minicroft.md) — `MiniCroft` / `get_minicroft()` reference
-- [capture-session.md](capture-session.md) — `CaptureSession` internals
-- [ci-integration.md](ci-integration.md) — wiring ovoscope into GitHub Actions CI
+- [end2end-test.md](end2end-test.md): full `End2EndTest` parameter reference
+- [minicroft.md](minicroft.md): `MiniCroft` / `get_minicroft()` reference
+- [capture-session.md](capture-session.md): `CaptureSession` internals
+- [ci-integration.md](ci-integration.md): wiring ovoscope into GitHub Actions CI
 - Canonical examples: `Skills/ovos-skill-hello-world/test/test_helloworld.py`
 - Core examples: `ovos-core/test/end2end/`
 
@@ -618,3 +622,6 @@ mc.stop()
 ```
 
 See [ovoscope/__init__.py](../ovoscope/__init__.py) for `GUICaptureSession` API.
+
+---
+[Home](../README.md) · [CLI →](cli.md)

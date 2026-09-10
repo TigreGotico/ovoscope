@@ -207,8 +207,24 @@ class TestPluginFactories:
             # stale_instance was NOT loaded
             assert phal._loaded["dual-plugin"] is not stale_instance
 
-    def test_factory_raising_warns_and_skips_plugin(self):
-        """A factory that raises issues a warning and the plugin is not loaded."""
+    def test_factory_raising_fails_the_harness(self):
+        """A factory that raises stops the harness instead of degrading.
+
+        A silently skipped plugin used to resurface much later as an
+        unrelated assert_emitted timeout.
+        """
+        def bad_factory(bus: FakeBus):
+            raise RuntimeError("factory error")
+
+        with pytest.raises(RuntimeError, match="bad-plugin"):
+            with MiniPHAL(
+                plugin_ids=["bad-plugin"],
+                plugin_factories={"bad-plugin": bad_factory},
+            ):
+                pass
+
+    def test_factory_raising_warns_and_skips_plugin_when_tolerated(self):
+        """With tolerate_load_errors, the failure warns and the plugin is skipped."""
         import warnings
 
         def bad_factory(bus: FakeBus):
@@ -219,8 +235,10 @@ class TestPluginFactories:
             with MiniPHAL(
                 plugin_ids=["bad-plugin"],
                 plugin_factories={"bad-plugin": bad_factory},
+                tolerate_load_errors=True,
             ) as phal:
                 assert "bad-plugin" not in phal._loaded
+                assert phal.load_errors
         assert any("bad-plugin" in str(warning.message) for warning in w)
 
     def test_phal_test_plugin_factories_field(self):

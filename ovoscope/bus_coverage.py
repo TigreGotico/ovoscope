@@ -52,6 +52,7 @@ from typing import Any, Dict, List, Optional
 
 import ovoscope
 from ovos_bus_client.message import Message
+from ovos_utils.log import LOG
 
 
 # ---------------------------------------------------------------------------
@@ -388,10 +389,15 @@ class BusCoverageTracker:
         self._global_registrations: Dict[str, int] = {}
         self._global_skill_registrations: Dict[str, Dict[str, int]] = {}
 
+        # The global collector is SESSION-cumulative: it keeps counting across
+        # every test in the process. Snapshot it at tracker START so the report
+        # can use the DELTA (collector_now - snapshot_at_start) — otherwise
+        # every later test inherits the invocation counts of every earlier one.
+        self._collector_baseline: Dict[str, int] = {}
+        self._global_frozen: bool = False
         collector = ovoscope.GLOBAL_BUS_COVERAGE_COLLECTOR
         if collector:
-            # Snapshot the global state at initialization
-            self._global_invocations = dict(collector.invocations)
+            self._collector_baseline = dict(collector.invocations)
             self._global_registrations = dict(collector.registrations)
             self._global_skill_registrations = deepcopy(collector.skill_registrations)
 
@@ -400,7 +406,24 @@ class BusCoverageTracker:
         # skill_id -> {msg_type -> asserted_count}
         self._asserted: Dict[str, Dict[str, int]] = {}
         self._original_emit: Optional[Any] = None
+        self._patched_emit: Optional[Any] = None
         self._tracking: bool = False
+
+    def _collector_delta(self) -> Dict[str, int]:
+        """Invocations recorded by the global collector since tracker start.
+
+        Covers this test's own boot sequence when the tracker is constructed
+        before the MiniCroft boots, and excludes everything earlier tests did.
+        """
+        collector = ovoscope.GLOBAL_BUS_COVERAGE_COLLECTOR
+        if not collector:
+            return {}
+        delta: Dict[str, int] = {}
+        for msg_type, count in collector.invocations.items():
+            diff = count - self._collector_baseline.get(msg_type, 0)
+            if diff > 0:
+                delta[msg_type] = diff
+        return delta
 
     # ------------------------------------------------------------------
     # Public API
@@ -557,6 +580,13 @@ class BusCoverageTracker:
         """
         if self._tracking:
             return
+        # Freeze the collector delta accumulated between tracker construction
+        # and now — i.e. this test's own boot sequence when the tracker was
+        # created before the MiniCroft booted. Everything from here on is
+        # counted locally by the patched emit below, so freezing here is what
+        # keeps the two sources from double counting the same emit.
+        self._global_invocations = self._collector_delta()
+        self._global_frozen = True
         original_emit = self._bus.emit
         invocations = self._invocations
 
@@ -567,16 +597,30 @@ class BusCoverageTracker:
             original_emit(message)
 
         self._original_emit = original_emit
+        self._patched_emit = _patched_emit
         self._bus.emit = _patched_emit
         self._tracking = True
 
     def stop_tracking(self) -> None:
-        """Restore the original ``bus.emit`` and stop counting invocations."""
+        """Restore the original ``bus.emit`` and stop counting invocations.
+
+        Restores only when ``bus.emit`` is still THIS tracker's wrapper. If
+        another tracker wrapped the bus on top of ours, assigning our saved
+        original would silently discard that tracker's wrapper and leave it
+        counting nothing; leaving the chain alone is the lesser damage.
+        """
         if not self._tracking:
+            return
+        self._tracking = False
+        if self._bus.emit is not getattr(self, "_patched_emit", None):
+            LOG.warning("ovoscope: bus.emit was re-wrapped by another tracker; "
+                        "leaving it in place instead of clobbering it")
+            self._original_emit = None
+            self._patched_emit = None
             return
         self._bus.emit = self._original_emit
         self._original_emit = None
-        self._tracking = False
+        self._patched_emit = None
 
     def record_session(
         self,
@@ -630,6 +674,11 @@ class BusCoverageTracker:
         Returns:
             Fully populated :class:`BusCoverageReport` instance.
         """
+        if not self._global_frozen:
+            # start_tracking() was never called — fall back to the full delta
+            # over the tracker's lifetime.
+            self._global_invocations = self._collector_delta()
+            self._global_frozen = True
         all_skill_ids = (
             set(self._registered)
             | set(self._observed)

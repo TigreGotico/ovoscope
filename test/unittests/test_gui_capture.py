@@ -95,7 +95,8 @@ class TestGUICaptureSessionAssertions(unittest.TestCase):
             "gui.page.show",
             {"page_names": ["SYSTEM_clock"], "__from": "ovos-skill-date-time.openvoiceos"},
         )]
-        session.assert_page_shown("date-time", "SYSTEM_clock")
+        session.assert_page_shown("ovos-skill-date-time.openvoiceos",
+                                  "SYSTEM_clock")
 
     def test_assert_namespace_has_key_from_field(self) -> None:
         """Value set using __from (real wire format)."""
@@ -104,7 +105,8 @@ class TestGUICaptureSessionAssertions(unittest.TestCase):
             "gui.value.set",
             {"__from": "ovos-skill-weather.openvoiceos", "current_temp": 22},
         )]
-        session.assert_namespace_has_key("weather", "current_temp")
+        session.assert_namespace_has_key("ovos-skill-weather.openvoiceos",
+                                         "current_temp")
 
     # -- assert_template_shown (SYSTEM_* template model) --
 
@@ -168,3 +170,65 @@ class TestGUICaptureSessionAssertions(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    # -- near-match assertions must FAIL (round-2 audit) --
+
+    def test_page_shown_rejects_near_match_namespace(self) -> None:
+        """A namespace that merely CONTAINS the expected one must not pass."""
+        session = self._make_session()
+        session.messages = [self._page_show_msg("weatherskill-extended",
+                                                "hello.qml")]
+        with self.assertRaises(AssertionError):
+            session.assert_page_shown("weatherskill", "hello.qml", timeout=0.1)
+
+    def test_page_shown_rejects_near_match_page(self) -> None:
+        """A page name that merely CONTAINS the expected one must not pass."""
+        session = self._make_session()
+        session.messages = [self._page_show_msg("weatherskill",
+                                                "hello_world.qml")]
+        with self.assertRaises(AssertionError):
+            session.assert_page_shown("weatherskill", "hello.qml", timeout=0.1)
+
+    def test_page_shown_matches_page_basename(self) -> None:
+        """A directory prefix on the shown page does not change the result."""
+        session = self._make_session()
+        session.messages = [self._page_show_msg("weatherskill",
+                                                "ui/hello.qml")]
+        session.assert_page_shown("weatherskill", "hello.qml")
+
+    def test_page_shown_opt_in_prefix_matching(self) -> None:
+        """exact=False restores the old prefix/substring behaviour."""
+        session = self._make_session()
+        session.messages = [self._page_show_msg("weatherskill-extended",
+                                                "hello_world.qml")]
+        session.assert_page_shown("weatherskill", "hello", exact=False)
+
+    def test_namespace_value_rejects_near_match_namespace(self) -> None:
+        """assert_namespace_value must not pass on a containing namespace."""
+        session = self._make_session()
+        session.messages = [self._value_set_msg("skill-extended",
+                                                {"greeting": "Hello!"})]
+        with self.assertRaises(AssertionError):
+            session.assert_namespace_value("skill", "greeting", "Hello!")
+
+    def test_namespace_has_key_rejects_near_match_namespace(self) -> None:
+        """assert_namespace_has_key must not pass on a containing namespace."""
+        session = self._make_session()
+        session.messages = [self._value_set_msg("skill-extended", {"key": 1})]
+        with self.assertRaises(AssertionError):
+            session.assert_namespace_has_key("skill", "key")
+
+    def test_namespace_cleared_rejects_near_match_namespace(self) -> None:
+        """assert_namespace_cleared must not pass on a containing namespace."""
+        session = self._make_session()
+        session.messages = [Message("gui.clear.namespace",
+                                    {"namespace": "skill-extended"})]
+        with self.assertRaises(AssertionError):
+            session.assert_namespace_cleared("skill")
+
+    def test_namespace_cleared_exact(self) -> None:
+        """The matching namespace still passes."""
+        session = self._make_session()
+        session.messages = [Message("gui.clear.namespace",
+                                    {"namespace": "skill"})]
+        session.assert_namespace_cleared("skill")

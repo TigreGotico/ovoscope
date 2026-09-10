@@ -23,6 +23,16 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 
+class _Missing:
+    """Sentinel for "key absent", distinct from a stored ``None``."""
+
+    def __repr__(self) -> str:  # pragma: no cover - debug aid
+        return "<missing>"
+
+
+_MISSING = _Missing()
+
+
 @dataclass
 class MessageDiff:
     """Diff result for a single message pair at a given index.
@@ -141,9 +151,12 @@ def _dict_diff(
     """
     diffs: Dict[str, Tuple[Any, Any]] = {}
     for k, exp_v in expected.items():
-        act_v = actual.get(k)
+        # _MISSING, not None: an expected value of None must still differ from
+        # an ABSENT key, otherwise `{"a": None}` vs `{}` compares equal and the
+        # diff reports a match that is not there.
+        act_v = actual.get(k, _MISSING)
         if act_v != exp_v:
-            diffs[k] = (exp_v, act_v)
+            diffs[k] = (exp_v, None if act_v is _MISSING else act_v)
     if strict:
         for k, act_v in actual.items():
             if k not in expected:
@@ -162,10 +175,18 @@ def _load_messages(path: str) -> List[Dict[str, Any]]:
 
     Raises:
         FileNotFoundError: If *path* does not exist.
+        ValueError: If the file is not an ovoscope fixture (no
+            ``expected_messages`` key). Defaulting to an empty list here made
+            two unrelated JSON files compare as "Identical" and exit 0.
     """
     with open(path, "r", encoding="utf-8") as fh:
         payload = json.load(fh)
-    return payload.get("expected_messages", [])
+    if not isinstance(payload, dict) or "expected_messages" not in payload:
+        raise ValueError(
+            f"not an ovoscope fixture: {path} has no 'expected_messages' key. "
+            f"Fixture files are produced by End2EndTest.save()."
+        )
+    return payload["expected_messages"]
 
 
 def diff_fixtures(

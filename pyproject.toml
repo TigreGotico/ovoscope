@@ -13,19 +13,35 @@ authors = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    # Alpha pin: 2.0.4 stable not yet released; 2.0.4a2 is the minimum that
-    # includes the FakeBus-compatible SkillManager changes ovoscope depends on.
-    "ovos-core>=2.0.4a2",
+    # Alpha pin: ovos-core 3.0.1a1 is the first release carrying Padatious in
+    # the [plugins] extra (padatious dropped its libfann dependency and is now
+    # pure Apache). Bare ovos-core ships no pipeline matchers at all;
+    # [plugins] covers Adapt, Padatious, and Padacioso.
+    "ovos-core[plugins]>=3.0.1a1",
     # The audio harness emits/observes the ovos.* spec topics while ovos-audio
     # still produces the legacy topics. >=0.12.0a1 is the first FakeBus that
     # mirrors MessageBusClient's legacy<->ovos.* namespace migration (ovos-utils
     # #381), so a legacy producer reaches a spec listener (and vice-versa) on the
     # test double. Prerelease floor pin: resolves without --pre.
     "ovos-utils>=0.12.0a1",
+    # anonymize_message() uses Session.location with OVOS-SESSION-1 §3.5 spec
+    # shape ({lat, lon, tz}); >=2.11.3a1 is the first release where the spec
+    # shape is the canonical location field (location_preferences is deprecated).
+    "ovos-bus-client>=2.11.3a1",
+    # both_spellings() resolves a migrating topic's counterpart from the
+    # migration map, so a source/destination rule written for one spelling
+    # holds under the other. ovos-bus-client already requires this package;
+    # naming it here makes the import honest rather than transitive. The floor
+    # is the first release carrying the OVOS-FALLBACK-1 renames, without which
+    # the default keep-src topics expand to themselves and the rule is vacuous.
+    "ovos-spec-tools>=1.12.0a1",
     # ovoscope ships a pytest plugin (pytest11 entry point) -> pytest is a runtime
     # dependency. >=8 is required: the pytest_pycollect_makemodule hook dropped the
     # 'path' argument in pytest 8.
     "pytest>=8",
+    # coverage.py validates pyproject.toml manifests; stdlib tomllib only
+    # exists on 3.11+, so 3.10 needs the backport for the same honesty.
+    "tomli>=2; python_version<'3.11'",
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -42,11 +58,28 @@ pydantic = ["ovos-pydantic-models>=0.1.0"]
 # ovos-spec-tools 0.10.0a1, so that is the real floor.
 audio = ["ovos-audio>=1.3.0a1", "ovos-spec-tools>=0.10.0a1"]
 # OCP / ovos-media player harnesses (ovoscope.media: OCPPlayerHarness, ...).
-media = ["ovos-media>=0.0.2a3"]
+# 2.0.0a9 floor: the harness targets the restructured daemon layout
+# (media_backends.audio.AudioService/BaseMediaService signatures, no in-core
+# GUI); older ovos-media has a different module layout the harness never
+# supported in practice.
+media = ["ovos-media>=2.0.0a9"]
 # MiniListener plugin_instances path (feed_audio_stream) needs the dinkum
 # AudioTransformersService. >=0.7.2a1 is the first release that allows
 # ovos-bus-client 2.x (older pins cap it <2.0.0 and conflict with ovos-core).
 listener = ["ovos-dinkum-listener>=0.7.2a1"]
+# Per-clip WakeWordProbe (ovoscope.wakeword_probe): streams audio arrays through
+# a real HotWordEngine. Only needs numpy — the engine itself is environmental.
+bench = ["numpy"]
+# Multi-engine golden-utterance runner (ovoscope.golden): template engines
+# plus the Model2Vec zero-shot prototype pipeline, scored standalone against
+# a skill's own resource files (no bus/MiniCroft boot required). Padatious
+# and padacioso already ship with ovos-core[plugins]; nebulento and
+# ovos-m2v-pipeline do not, so they are listed explicitly here.
+engines = [
+    "nebulento",
+    "ovos-m2v-pipeline",
+    "ovos-spec-tools>=1.9.1a1",
+]
 # End-to-end TTS intelligibility scoring (WER/CER round-trip via reference STT).
 # faster-whisper itself is pulled by the plugin — don't list it here to avoid
 # version skew.
@@ -56,16 +89,25 @@ tts = [
     "ovos-utterance-normalizer",
     "ovos-stt-plugin-fasterwhisper",
 ]
-dev = [
+# Every dependency test/unittests/ actually imports, in one extra, so
+# `pip install '.[test]'` (what the docs/reviews assume exists, and what
+# CI's coverage/build-tests workflows install) is enough to collect and
+# run the full suite with nothing skipped for a missing optional dep.
+test = [
     "ovos-audio>=1.3.0a1",
-    "ovos-media>=0.0.2a3",
+    "ovos-media>=2.0.0a9",
     "ovos-dinkum-listener>=0.7.2a1",
     "ovos-pydantic-models>=0.1.0",
+    "numpy",
     "jiwer",
     "ovos-utterance-normalizer",
     "ovos-stt-plugin-fasterwhisper",
     "pytest-cov",
+    "nebulento",
+    "ovos-m2v-pipeline",
+    "ovos-spec-tools>=1.9.1a1",
 ]
+dev = ["ovoscope[test]"]
 
 [project.scripts]
 ovoscope = "ovoscope.cli:main"

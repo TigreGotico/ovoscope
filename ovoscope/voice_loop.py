@@ -61,6 +61,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from ovos_bus_client.message import Message
 from ovos_utils.fakebus import FakeBus
 
+from ovoscope import _topic_matches
+
 # Re-export the engine mocks so callers have a single import site for the
 # voice-loop harness.
 from ovoscope.listener import MockHotWordEngine, MockVADEngine  # noqa: F401
@@ -549,7 +551,11 @@ class ListenerHarness:
 
     @staticmethod
     def _has(messages: List[Message], msg_type: str) -> bool:
-        return any(m.msg_type == msg_type for m in messages)
+        # Accepts either the legacy or canonical spelling of msg_type — see
+        # ovoscope._topic_matches: these helpers filter execute()/feed_*()'s
+        # catch-all-captured stream, which can carry either spelling
+        # depending on producer vintage.
+        return any(_topic_matches(m.msg_type, msg_type) for m in messages)
 
     def _resolve(self, messages: Optional[List[Message]]) -> List[Message]:
         return messages if messages is not None else self._last_messages
@@ -654,7 +660,7 @@ class ListenerHarness:
         msgs = self._resolve(messages)
         utts: List[str] = []
         for m in msgs:
-            if m.msg_type == "recognizer_loop:utterance":
+            if _topic_matches(m.msg_type, "recognizer_loop:utterance"):
                 utts.extend(m.data.get("utterances", []))
         assert utts, (
             "Expected 'recognizer_loop:utterance' but it was not emitted. "
@@ -677,7 +683,26 @@ class ListenerHarness:
         return self
 
     def __exit__(self, *_: Any) -> None:
-        self.shutdown()
+        try:
+            self.shutdown()
+        finally:
+            self.detach_capture()
+
+    def detach_capture(self) -> None:
+        """Unsubscribe the wildcard ``"message"`` capture handler.
+
+        The bus may be shared with another harness or with the caller. A
+        capture handler left behind keeps appending to a dead harness's
+        message list — and every later message shows up in ``_messages``.
+        """
+        bus = getattr(self, "bus", None)
+        capture = getattr(self, "_capture", None)
+        if bus is None or capture is None:
+            return
+        try:
+            bus.remove("message", capture)
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -928,9 +953,17 @@ class MiniVoiceLoop(ListenerHarness):
     # ------------------------------------------------------------------
 
     def shutdown(self) -> None:
-        """Shut down the hotword container and wrapped engines."""
-        if self.hotwords is not None:
-            self.hotwords.shutdown()
+        """Shut down the hotword container and detach the bus capture handler.
+
+        Callers that use the harness without the context manager only ever
+        call shutdown(); if that does not detach the capture handler, the dead
+        harness keeps collecting every message on a shared bus.
+        """
+        try:
+            if self.hotwords is not None:
+                self.hotwords.shutdown()
+        finally:
+            self.detach_capture()
 
 
 # ---------------------------------------------------------------------------

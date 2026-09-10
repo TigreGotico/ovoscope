@@ -57,6 +57,20 @@ _REFERENCE_STT_LOCK = threading.Lock()
 _NORMALIZER: Optional[Any] = None
 
 
+def _utt_slug(utterance: str) -> str:
+    """Stable, collision-resistant filename stem for an utterance.
+
+    ``hash()`` is randomised per process (PYTHONHASHSEED) and truncating it to
+    32 bits collides at a few tens of thousands of utterances — two different
+    utterances then write to the same file and the second scores the first's
+    audio. A sha1 prefix is stable across runs and collision-free at any corpus
+    size a test suite will reach.
+    """
+    import hashlib
+
+    return hashlib.sha1(utterance.encode("utf-8")).hexdigest()[:16]
+
+
 def get_reference_stt() -> Any:
     """Return a lazily-instantiated faster-whisper ``tiny`` reference STT.
 
@@ -149,15 +163,21 @@ class UtteranceScore:
         wav_path: Path to the captured rendered WAV (may be None on failure).
         lang: BCP-47 language tag used for synthesis and scoring.
         voice: Voice identifier used, if any.
+        transcribe_failed: True when the reference STT itself failed, so
+            ``transcript`` is None and the 1.0 error rates say nothing about
+            the TTS engine. Read this before treating a score as a TTS defect.
+        transcribe_error: The STT failure message, when there was one.
     """
 
     utterance: str
-    transcript: str
+    transcript: Optional[str]
     wer: float
     cer: float
     wav_path: Optional[str] = None
     lang: str = "en-US"
     voice: Optional[str] = None
+    transcribe_failed: bool = False
+    transcribe_error: Optional[str] = None
 
     def to_dict(self) -> dict:
         """Return a JSON-serialisable dict of this score."""
@@ -169,6 +189,8 @@ class UtteranceScore:
             "wav_path": self.wav_path,
             "lang": self.lang,
             "voice": self.voice,
+            "transcribe_failed": self.transcribe_failed,
+            "transcribe_error": self.transcribe_error,
         }
 
 
@@ -314,7 +336,7 @@ class TTSIntelligibilityHarness:
         """
         ext = (getattr(self.tts, "audio_ext", "wav") or "wav").lstrip(".")
         out_path = os.path.join(
-            self._tmpdir, f"direct_{abs(hash(utterance)) & 0xffffffff}.{ext}"
+            self._tmpdir, f"direct_{_utt_slug(utterance)}.{ext}"
         )
         self.tts.get_tts(utterance, out_path, lang=self.lang, voice=self.voice)
         return out_path if os.path.isfile(out_path) else None
@@ -425,14 +447,23 @@ class TTSIntelligibilityHarness:
             wav_path = None
 
         transcript = ""
+        transcribe_failed = False
+        transcribe_error = None
         if wav_path and os.path.isfile(wav_path):
             try:
                 transcript = self._transcribe(wav_path)
-            except Exception:
-                transcript = ""
+            except Exception as exc:
+                # A reference-STT crash is NOT evidence that the TTS is
+                # unintelligible. Silently scoring wer=1.0 turns a broken STT
+                # into a fake TTS regression, so mark the score instead.
+                LOG.error(f"reference STT failed for {utterance!r} "
+                          f"({wav_path}): {exc}")
+                transcript = None
+                transcribe_failed = True
+                transcribe_error = f"{type(exc).__name__}: {exc}"
 
         ref = _normalize(utterance, self.lang)
-        hyp = _normalize(transcript, self.lang)
+        hyp = _normalize(transcript or "", self.lang)
         wer, cer = _score_pair(ref, hyp)
         return UtteranceScore(
             utterance=utterance,
@@ -442,6 +473,8 @@ class TTSIntelligibilityHarness:
             wav_path=wav_path,
             lang=self.lang,
             voice=self.voice,
+            transcribe_failed=transcribe_failed,
+            transcribe_error=transcribe_error,
         )
 
     def score(self, utterances: List[str]) -> IntelligibilityReport:

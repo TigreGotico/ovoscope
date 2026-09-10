@@ -66,6 +66,9 @@ class MiniPHAL:
         emit_legacy: FakeBus also emits the legacy topic when an ovos.* spec topic
             is emitted (spec producer -> legacy listener). Set both False to
             exercise a single namespace with no bridging.
+        tolerate_load_errors: When False (default), a plugin that fails to load
+            raises immediately. When True, the failure is warned about, kept in
+            :attr:`load_errors`, and quoted in ``assert_emitted`` failures.
 
     Example::
 
@@ -96,6 +99,7 @@ class MiniPHAL:
         config: Optional[Dict[str, Dict[str, Any]]] = None,
         modernize: bool = True,
         emit_legacy: bool = True,
+        tolerate_load_errors: bool = False,
     ) -> None:
         self.plugin_ids: List[str] = plugin_ids or []
         self.plugin_instances: Dict[str, Any] = plugin_instances or {}
@@ -104,8 +108,11 @@ class MiniPHAL:
         self.modernize: bool = modernize
         self.emit_legacy: bool = emit_legacy
         self._bus: FakeBus = FakeBus(modernize=modernize, emit_legacy=emit_legacy)
+        self.tolerate_load_errors: bool = tolerate_load_errors
         self._captured: List[Message] = []
         self._loaded: Dict[str, Any] = {}
+        # (plugin_id, error text) for every plugin that failed to load
+        self.load_errors: List[tuple] = []
 
     # ------------------------------------------------------------------
     # Context manager interface
@@ -118,13 +125,22 @@ class MiniPHAL:
         return self
 
     def __exit__(self, *_: Any) -> None:
-        """Shut down all loaded plugins and close the bus."""
-        for plugin in self._loaded.values():
+        """Shut down all loaded plugins, detach the capture handler, close the bus."""
+        try:
+            for plugin in self._loaded.values():
+                try:
+                    plugin.shutdown()
+                except Exception:
+                    pass
+        finally:
             try:
-                plugin.shutdown()
+                self._bus.remove("message", self._capture)
             except Exception:
                 pass
-        self._bus.remove("message", self._capture)
+            try:
+                self._bus.close()
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -140,17 +156,25 @@ class MiniPHAL:
         self._captured.append(message)
 
     def _load_plugins(self) -> None:
-        """Load PHAL plugins via factories, pre-built instances, or OPM."""
+        """Load PHAL plugins via factories, pre-built instances, or OPM.
+
+        A load failure RAISES by default. Degrading it to a warning only moves
+        the failure: the plugin is silently absent and resurfaces much later as
+        an unrelated ``assert_emitted`` timeout. Set
+        ``tolerate_load_errors=True`` to keep the old behaviour; the errors are
+        then recorded in :attr:`load_errors` and quoted in assertion failures.
+
+        Raises:
+            RuntimeError: If any plugin fails to load and
+                ``tolerate_load_errors`` is False.
+        """
         for plugin_id in self.plugin_ids:
             if plugin_id in self.plugin_factories:
                 try:
                     instance = self.plugin_factories[plugin_id](self._bus)
                 except Exception as exc:
-                    import warnings
-                    warnings.warn(
-                        f"Factory for PHAL plugin {plugin_id!r} raised: {exc}",
-                        stacklevel=2,
-                    )
+                    self._record_load_error(
+                        plugin_id, f"factory raised: {exc}")
                     instance = None
             elif plugin_id in self.plugin_instances:
                 instance = self.plugin_instances[plugin_id]
@@ -158,6 +182,20 @@ class MiniPHAL:
                 instance = self._instantiate_plugin(plugin_id)
             if instance is not None:
                 self._loaded[plugin_id] = instance
+
+    def _record_load_error(self, plugin_id: str, reason: str) -> None:
+        """Record — or raise on — a plugin load failure."""
+        self.load_errors.append((plugin_id, reason))
+        if not self.tolerate_load_errors:
+            raise RuntimeError(
+                f"PHAL plugin {plugin_id!r} failed to load: {reason}. "
+                f"Pass tolerate_load_errors=True to continue without it."
+            )
+        import warnings
+        warnings.warn(
+            f"PHAL plugin {plugin_id!r} failed to load: {reason}",
+            stacklevel=3,
+        )
 
     def _instantiate_plugin(self, plugin_id: str) -> Optional[Any]:
         """Instantiate a PHAL plugin by its OPM entry-point ID.
@@ -174,11 +212,7 @@ class MiniPHAL:
             plugin = PHALPlugin(bus=self._bus, config=cfg, plugin_id=plugin_id)
             return plugin
         except Exception as exc:
-            import warnings
-            warnings.warn(
-                f"Failed to load PHAL plugin {plugin_id!r}: {exc}",
-                stacklevel=2,
-            )
+            self._record_load_error(plugin_id, str(exc))
             return None
 
     # ------------------------------------------------------------------
@@ -218,9 +252,17 @@ class MiniPHAL:
                     return msg
             time.sleep(0.05)
         captured_types = [m.msg_type for m in self._captured]
+        hint = ""
+        if self.load_errors:
+            # A tolerated load failure is the usual cause of this timeout —
+            # name it instead of leaving the caller to guess.
+            hint = (
+                f" NOTE: {len(self.load_errors)} PHAL plugin(s) failed to load "
+                f"and were tolerated: {self.load_errors}"
+            )
         raise AssertionError(
             f"Expected message type {msg_type!r} was not emitted within {timeout}s. "
-            f"Captured: {captured_types}"
+            f"Captured: {captured_types}.{hint}"
         )
 
     def assert_not_emitted(self, msg_type: str, wait: float = 0.2) -> None:
@@ -264,6 +306,9 @@ class PHALTest:
         modernize: Forwarded to :class:`MiniPHAL` — FakeBus bridges legacy->spec.
         emit_legacy: Forwarded to :class:`MiniPHAL` — FakeBus bridges spec->legacy.
             Set both False to exercise a single namespace with no bridging.
+        tolerate_load_errors: Forwarded to :class:`MiniPHAL`. False (default)
+            makes a plugin load failure raise instead of surfacing later as an
+            unrelated ``assert_emitted`` timeout.
 
     Example::
 
@@ -288,6 +333,7 @@ class PHALTest:
     timeout: float = 5.0
     modernize: bool = True
     emit_legacy: bool = True
+    tolerate_load_errors: bool = False
 
     def execute(self) -> List[Message]:
         """Run the test: load plugins, emit trigger, assert expectations.
@@ -305,6 +351,7 @@ class PHALTest:
             config=self.config,
             modernize=self.modernize,
             emit_legacy=self.emit_legacy,
+            tolerate_load_errors=self.tolerate_load_errors,
         ) as phal:
             phal.emit(self.trigger_message, wait=0.1)
 

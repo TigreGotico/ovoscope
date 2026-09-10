@@ -34,6 +34,33 @@ from typing import Any, Dict, List, Optional
 from ovos_utils.messagebus import Message
 
 
+@dataclass
+class MatchResult:
+    """Discriminated outcome of a single :meth:`PipelineHarness.match_result`.
+
+    Attributes:
+        outcome: One of ``"matched"``, ``"no_match"`` or ``"timeout"``.
+            ``"no_match"`` means the pipeline explicitly reported an intent
+            failure. ``"timeout"`` means nothing came back at all — the
+            pipeline gave no verdict, which is a harness problem and must not
+            be read as "no match".
+        message: The matched :class:`Message`, or ``None``.
+    """
+
+    outcome: str
+    message: Optional[Message] = None
+
+    @property
+    def matched(self) -> bool:
+        """True only when the pipeline produced a match."""
+        return self.outcome == "matched"
+
+    @property
+    def timed_out(self) -> bool:
+        """True when the pipeline gave no verdict within the timeout."""
+        return self.outcome == "timeout"
+
+
 class _SinkSkill:
     """Internal catch-all fallback skill so matched intents have somewhere to route.
 
@@ -85,7 +112,11 @@ class _SinkSkill:
                 message = Message.deserialize(message)
             except Exception:
                 return
-        # Failures are tracked by absence of _last_match.
+        # An explicit failure CLEARS the previous match. Without this, a
+        # match -> failure -> ... sequence leaves the first match visible on
+        # `_last_match`, so anything reading it sees a verdict from an earlier
+        # utterance.
+        self._last_match = None
 
 
 class PipelineHarness:
@@ -129,6 +160,7 @@ class PipelineHarness:
         self.modernize: bool = modernize
         self.emit_legacy: bool = emit_legacy
         self._mc: Any = None
+        self._sink: Any = None
 
     # ------------------------------------------------------------------
     # Context manager interface
@@ -152,9 +184,16 @@ class PipelineHarness:
             emit_legacy=self.emit_legacy,
         )
 
-        # Update sink skill's bus reference now that MiniCroft is created
-        if self._mc is not None:
-            sink_skill.bus = self._mc.bus
+        # MiniCroft patches process-wide globals that only stop() restores, so
+        # anything that raises after a successful boot must still shut it down.
+        try:
+            # Update sink skill's bus reference now that MiniCroft is created
+            if self._mc is not None:
+                sink_skill.bus = self._mc.bus
+            self._sink = sink_skill
+        except BaseException:
+            self.__exit__(None, None, None)
+            raise
 
         return self
 
@@ -163,10 +202,91 @@ class PipelineHarness:
         if self._mc is not None:
             self._mc.stop()
             self._mc = None
+        self._sink = None
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def match_result(self, utterance: str, timeout: float = 5.0) -> "MatchResult":
+        """Send *utterance* through the pipeline and report what happened.
+
+        Unlike :meth:`match`, this distinguishes the three outcomes a caller
+        must tell apart: a match, an explicit intent failure, and a timeout
+        (nothing at all came back — usually a broken harness, not a genuine
+        "no match").
+
+        Args:
+            utterance: Text utterance to send.
+            timeout: Seconds to wait for a verdict (default 5.0).
+
+        Returns:
+            A :class:`MatchResult`.
+        """
+        if self._mc is None:
+            raise RuntimeError("PipelineHarness must be used as a context manager.")
+
+        # Clear the previous utterance's verdict so a stale match can never be
+        # read as this utterance's result.
+        if self._sink is not None:
+            self._sink._last_match = None
+
+        import threading
+
+        captured: List[Message] = []
+        lock = threading.Lock()
+        done = threading.Event()
+        _failed = threading.Event()
+
+        success_type = "intent.service.skills.activated"
+        # NOTE: `mycroft.skill.handler.start` is NOT a failure — it fires on a
+        # SUCCESSFUL match, right before the skill handler runs. Treating it as
+        # one made every successful match report "no match".
+        failure_types = ["intent_failure", "complete_intent_failure"]
+
+        def _on_success(msg: Any) -> None:
+            if isinstance(msg, str):
+                try:
+                    msg = Message.deserialize(msg)
+                except Exception:
+                    return
+            with lock:
+                captured.append(msg)
+            done.set()
+
+        def _on_failure(msg: Any) -> None:
+            _failed.set()
+            done.set()
+
+        self._mc.bus.on(success_type, _on_success)
+        for et in failure_types:
+            self._mc.bus.on(et, _on_failure)
+
+        try:
+            src = Message(
+                "recognizer_loop:utterance",
+                data={"utterances": [utterance], "lang": self.lang},
+            )
+            self._mc.bus.emit(src)
+            # Wait directly on the shared event — no watcher thread. The old
+            # watcher polled at 20Hz forever after a timeout, because the
+            # handlers were already removed so its events could never be set.
+            completed = done.wait(timeout=timeout)
+        finally:
+            self._mc.bus.remove(success_type, _on_success)
+            for et in failure_types:
+                self._mc.bus.remove(et, _on_failure)
+
+        with lock:
+            got = captured[0] if captured else None
+        if got is not None:
+            # A real match wins over a concurrent failure signal.
+            return MatchResult(outcome="matched", message=got)
+        if _failed.is_set():
+            return MatchResult(outcome="no_match", message=None)
+        if not completed:
+            return MatchResult(outcome="timeout", message=None)
+        return MatchResult(outcome="no_match", message=None)
 
     def match(self, utterance: str, timeout: float = 5.0) -> Optional[Message]:
         """Send *utterance* through the pipeline and return the matched message.
@@ -179,64 +299,7 @@ class PipelineHarness:
             The ``recognizer_loop:utterance`` response message if a match occurs,
             otherwise ``None``.
         """
-        if self._mc is None:
-            raise RuntimeError("PipelineHarness must be used as a context manager.")
-
-        import threading
-
-        captured: List[Message] = []
-        _matched = threading.Event()
-        _failed = threading.Event()
-
-        success_type = "intent.service.skills.activated"
-        failure_types = ["intent_failure", "mycroft.skill.handler.start"]
-
-        def _on_success(msg: Any) -> None:
-            if isinstance(msg, str):
-                try:
-                    msg = Message.deserialize(msg)
-                except Exception:
-                    return
-            captured.append(msg)
-            _matched.set()
-
-        def _on_failure(msg: Any) -> None:
-            _failed.set()
-
-        self._mc.bus.on(success_type, _on_success)
-        for et in failure_types:
-            self._mc.bus.on(et, _on_failure)
-
-        src = Message(
-            "recognizer_loop:utterance",
-            data={"utterances": [utterance], "lang": self.lang},
-        )
-        self._mc.bus.emit(src)
-
-        # Wait for either a match or a failure signal
-        import threading as _threading
-        done = _threading.Event()
-
-        def _wait_either() -> None:
-            while not _matched.is_set() and not _failed.is_set():
-                _matched.wait(timeout=0.05)
-                if _matched.is_set() or _failed.is_set():
-                    break
-            done.set()
-
-        watcher = _threading.Thread(target=_wait_either, daemon=True)
-        watcher.start()
-        timed_out = not done.wait(timeout=timeout)
-
-        self._mc.bus.remove(success_type, _on_success)
-        for et in failure_types:
-            self._mc.bus.remove(et, _on_failure)
-
-        if timed_out:
-            return None
-        if _failed.is_set():
-            return None
-        return captured[0] if captured else None
+        return self.match_result(utterance, timeout=timeout).message
 
     def assert_matches(
         self,
@@ -258,7 +321,12 @@ class PipelineHarness:
         Raises:
             AssertionError: If no match is found or the intent type is wrong.
         """
-        msg = self.match(utterance, timeout=timeout)
+        result = self.match_result(utterance, timeout=timeout)
+        assert result.outcome != "timeout", (
+            f"Pipeline gave no verdict for utterance {utterance!r} within "
+            f"{timeout}s — neither a match nor an intent failure was emitted."
+        )
+        msg = result.message
         assert msg is not None, (
             f"Expected utterance {utterance!r} to be matched by the pipeline, but no match occurred."
         )
@@ -276,9 +344,19 @@ class PipelineHarness:
             timeout: Seconds to observe before asserting absence (default 2.0).
 
         Raises:
-            AssertionError: If a match is unexpectedly found.
+            AssertionError: If a match is unexpectedly found, or if the
+                pipeline gave no verdict at all within *timeout* (silence is
+                a broken harness, not proof of absence).
         """
-        msg = self.match(utterance, timeout=timeout)
+        result = self.match_result(utterance, timeout=timeout)
+        if result.outcome == "timeout":
+            raise AssertionError(
+                f"Pipeline gave no verdict for utterance {utterance!r} within "
+                f"{timeout}s — no match AND no intent failure was emitted. "
+                f"Absence of a match cannot be asserted from silence; check "
+                f"that the harness is wired and the pipeline is loaded."
+            )
+        msg = result.message
         if msg is not None and msg.msg_type != "intent_failure":
             raise AssertionError(
                 f"Utterance {utterance!r} was unexpectedly matched: {msg.msg_type!r}"

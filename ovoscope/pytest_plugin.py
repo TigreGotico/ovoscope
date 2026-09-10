@@ -443,7 +443,19 @@ def pytest_pycollect_makemodule(module_path, parent):
         return collector
     try:
         mod = collector.obj  # imports the module if not already loaded
-    except Exception:
+    except KeyboardInterrupt:
+        raise
+    except BaseException:
+        # Importing the module here is a side effect of auto-discovery,
+        # not the real collection attempt. A module-level
+        # ``pytest.skip()``/``pytest.importorskip()`` raises
+        # ``pytest.skip.Exception``, which subclasses ``BaseException``
+        # (via ``_pytest.outcomes.OutcomeException``), not ``Exception`` -
+        # a plain ``except Exception`` here lets it escape the hook
+        # wrapper uncaught and abort the whole collection session. Swallow
+        # it (and any other import-time failure) here and let pytest's own
+        # protected collection call re-import the module later, where it
+        # is reported as a normal per-module skip or error instead.
         return collector
     if not hasattr(mod, "ovoscope_intent_cases"):
         return collector
@@ -736,13 +748,75 @@ def _accuracy_markdown(summary, results, baseline_diff=None, top_n=10):
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _gate_state(config):
+    """Compute (and cache) the accuracy summary, baseline diff, and gate result.
+
+    Called from ``pytest_sessionfinish`` — which runs BEFORE
+    ``pytest_terminal_summary`` — so the exit status can be set from the same
+    numbers the summary prints. The result is cached on *config*, so the
+    summary reuses it instead of re-reading the baseline file.
+
+    Returns:
+        Dict with ``summary``, ``baseline_diff``, ``baseline_warning`` and
+        ``failures``, or ``None`` when no intent-case results were collected.
+    """
+    cached = getattr(config, "_ovoscope_gate_state", None)
+    if cached is not None:
+        return cached
+
+    accum = getattr(pytest_runtest_logreport, "_accum", None)
+    if not accum or not accum["results"]:
+        return None
+    summary = _accuracy_summary(accum["results"])
+
+    baseline_path = config.getoption("--ovoscope-accuracy-baseline")
+    baseline_diff = None
+    baseline_warning = None
+    if baseline_path:
+        try:
+            import json as _json
+            with open(baseline_path, "r", encoding="utf-8") as fh:
+                baseline_doc = _json.load(fh)
+            baseline_diff = _baseline_diff(
+                baseline_doc.get("results") or [],
+                accum["results"])
+        except Exception as exc:
+            baseline_warning = (f"could not read baseline "
+                                f"{baseline_path}: {exc}")
+
+    min_acc = config.getoption("--ovoscope-accuracy-min")
+    failures = []
+    if min_acc is not None and summary["overall_accuracy"] < min_acc:
+        failures.append(
+            f"overall accuracy {summary['overall_accuracy']:.1%} < "
+            f"required {min_acc:.1%}")
+    if baseline_diff is not None and baseline_diff["regressed"]:
+        top_regression = baseline_diff["regressed"][0]
+        failures.append(
+            f"{len(baseline_diff['regressed'])} cases regressed vs "
+            f"baseline (first: `{top_regression['pipeline']}` / "
+            f"`{top_regression['lang']}` / "
+            f"`{top_regression['intent']}` / "
+            f"{top_regression['utterance']!r})")
+
+    state = {"summary": summary,
+             "baseline_diff": baseline_diff,
+             "baseline_warning": baseline_warning,
+             "failures": failures}
+    config._ovoscope_gate_state = state
+    return state
+
+
 def pytest_terminal_summary(terminalreporter, exitstatus, config):  # noqa: ARG001
     """Combined session summary: bus coverage + intent-case accuracy."""
     _bus_coverage_summary(terminalreporter, config)
     accum = getattr(pytest_runtest_logreport, "_accum", None)
     if not accum or not accum["results"]:
         return
-    summary = _accuracy_summary(accum["results"])
+    state = _gate_state(config)
+    summary = state["summary"]
+    baseline_diff = state["baseline_diff"]
+    baseline_warning = state["baseline_warning"]
 
     tr = terminalreporter
     tr.write_sep("=", "ovoscope Intent-Case Accuracy")
@@ -767,23 +841,8 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):  # noqa: ARG0
         ratio = d["pass"] / d["total"] if d["total"] else 0.0
         tr.write_line(f"  {key:48s}  {d['pass']:4d}/{d['total']:<4d}  {ratio:>6.1%}")
 
-    # Load baseline (if any) and compute structural diff up-front so both
-    # the JSON / Markdown outputs and the gate can reuse it.
-    baseline_path = config.getoption("--ovoscope-accuracy-baseline")
-    baseline_diff = None
-    baseline_warning = None
-    if baseline_path:
-        try:
-            import json as _json
-            with open(baseline_path, "r", encoding="utf-8") as fh:
-                baseline_doc = _json.load(fh)
-            baseline_diff = _baseline_diff(
-                baseline_doc.get("results") or [],
-                accum["results"])
-        except Exception as exc:
-            baseline_warning = (f"could not read baseline "
-                                f"{baseline_path}: {exc}")
-            tr.write_line(f"\nWARNING: {baseline_warning}")
+    if baseline_warning:
+        tr.write_line(f"\nWARNING: {baseline_warning}")
 
     # Persist JSON.
     report_path = config.getoption("--ovoscope-accuracy-report")
@@ -820,31 +879,22 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):  # noqa: ARG0
             fh.write(md)
         tr.write_line(f"Wrote accuracy markdown -> {md_path}")
 
-    # Gate the session.
-    min_acc = config.getoption("--ovoscope-accuracy-min")
-    failures = []
-    if min_acc is not None and summary["overall_accuracy"] < min_acc:
-        failures.append(
-            f"overall accuracy {summary['overall_accuracy']:.1%} < "
-            f"required {min_acc:.1%}")
-    if baseline_diff is not None:
-        if baseline_diff["regressed"]:
-            top_regression = baseline_diff["regressed"][0]
-            failures.append(
-                f"{len(baseline_diff['regressed'])} cases regressed vs "
-                f"baseline (first: `{top_regression['pipeline']}` / "
-                f"`{top_regression['lang']}` / "
-                f"`{top_regression['intent']}` / "
-                f"{top_regression['utterance']!r})")
-    if failures:
+    # Report the gate result computed in pytest_sessionfinish.
+    if state["failures"]:
         tr.write_sep("!", "ovoscope accuracy gate FAILED")
-        for f in failures:
+        for f in state["failures"]:
             tr.write_line(f"  - {f}")
-        config._ovoscope_accuracy_gate_failed = True
 
 
 def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001
-    """Propagate accuracy-gate failure as a non-zero exit status."""
-    if getattr(session.config, "_ovoscope_accuracy_gate_failed", False):
+    """Evaluate the accuracy gate and propagate it as a non-zero exit status.
+
+    The gate MUST be computed here, not in ``pytest_terminal_summary``:
+    sessionfinish runs first, so a flag set by the summary would always be
+    read too late and the gate would never change the exit status.
+    """
+    state = _gate_state(session.config)
+    if state and state["failures"]:
+        session.config._ovoscope_accuracy_gate_failed = True
         if session.exitstatus == 0:
             session.exitstatus = 1

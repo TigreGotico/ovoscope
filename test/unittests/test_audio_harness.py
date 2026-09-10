@@ -566,6 +566,24 @@ class TestPlaybackServiceHarnessIsolation(unittest.TestCase):
                 hb.speak(f"harness B speak {n}", timeout=8.0)
             self.assertTrue(hb.svc.playback_thread.is_alive())
 
+    def test_repeated_sentence_is_synthesised_by_each_harness(self) -> None:
+        """The same sentence spoken in two harnesses must be synthesised twice.
+
+        ``TTSContext._caches`` is class-level and keyed by tts_id, so audio
+        rendered by one harness used to satisfy the next harness's request for
+        the same sentence: ``get_tts`` was never called and the second
+        harness's ``spoken_utterances`` stayed empty, silently degrading any
+        later test that asserts on what was actually synthesised.
+        """
+        with PlaybackServiceHarness() as first:
+            first.speak("hello world", timeout=8.0)
+            self.assertIn("hello world", first.mock_tts.spoken_utterances)
+
+        second_tts = MockTTS()
+        with PlaybackServiceHarness(tts=second_tts) as second:
+            second.speak("hello world", timeout=8.0)
+        self.assertIn("hello world", second_tts.spoken_utterances)
+
 
 if __name__ == "__main__":
     unittest.main()

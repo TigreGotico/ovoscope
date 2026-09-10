@@ -35,6 +35,20 @@ class TestLoadIntentCases(TestCase):
             self.assertEqual(len(cases), 3)
             self.assertEqual(sum(1 for c in cases if c.intent is None), 1)
             self.assertTrue(all(c.lang == "en-US" for c in cases))
+            # case ids are the OVOS-INTENT-4 canonical (suffixless) form the
+            # matcher plugins actually register, regardless of whether the
+            # caller's known_intents entries carry the legacy suffix
+            self.assertEqual({c.intent for c in cases if c.intent},
+                             {"WhoAreYou"})
+
+    def test_suffixless_known_intents_accepted(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            self._write(tmp, "en-US", "WhoAreYou.intent.test", "who are you\n")
+            cases = load_intent_cases(tmp / "cases",
+                                      known_intents=["WhoAreYou"])
+            self.assertEqual(cases[0].intent, "WhoAreYou")
 
     def test_unknown_intent_raises(self):
         import tempfile

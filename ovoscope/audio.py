@@ -310,11 +310,20 @@ class AudioServiceHarness:
         return self
 
     def __exit__(self, *args) -> None:
-        """Shut down AudioService and close the bus."""
-        if self.service:
-            self.service.shutdown()
-        if self.bus:
-            self.bus.close()
+        """Shut down AudioService and close the bus.
+
+        The bus is closed even when ``shutdown()`` raises — leaking an open
+        FakeBus keeps handlers alive and feeds a dead harness.
+        """
+        try:
+            if self.service:
+                self.service.shutdown()
+        finally:
+            if self.bus:
+                try:
+                    self.bus.close()
+                except Exception:
+                    pass
 
     # ------------------------------------------------------------------
     # Control methods
@@ -545,8 +554,9 @@ class PlaybackServiceHarness:
     observe the resulting ``ovos.audio.output.started/ended`` events.
 
     The harness patches ``ovos_utils.sound.play_audio`` so no actual audio
-    device is accessed. It also drains ``TTS.queue`` before construction to
-    prevent state bleed between tests.
+    device is accessed. It also drains ``TTS.queue`` before construction and
+    gives the harness its own ``TTSContext._caches``, so no queued utterance
+    and no already-synthesised audio bleeds between tests.
 
     Args:
         validate_source: Enable session-source validation in the service.
@@ -556,6 +566,9 @@ class PlaybackServiceHarness:
             to synthesise actual audio — the rendered WAV path of each
             utterance is captured in :attr:`captured_wavs`.
     """
+
+    # Only one harness may hold the process-wide ``TTS.queue`` at a time.
+    _active: ClassVar[Optional["PlaybackServiceHarness"]] = None
 
     def __init__(self, validate_source: bool = False,
                  disable_ocp: bool = True,
@@ -588,6 +601,11 @@ class PlaybackServiceHarness:
         self.mock_tts: Optional[TTS] = None
         # Paths captured from the ``play_audio`` side_effect, in playback order.
         self.captured_wavs: List[str] = []
+        # process-wide TTS.queue / TTSContext._caches bookkeeping (see __enter__)
+        self._previous_tts_queue = None
+        self._replaced_tts_queue: bool = False
+        self._previous_tts_caches = None
+        self._replaced_tts_caches: bool = False
         self._play_audio_patcher = None
         self._audio_enabled_patcher = None
         self._audio_output_start = threading.Event()
@@ -601,7 +619,19 @@ class PlaybackServiceHarness:
             self
         """
         from ovos_audio.service import PlaybackService
+        from ovos_plugin_manager.templates.tts import TTSContext
         from queue import Queue
+
+        # ``TTS.queue`` is process-wide CLASS state, so only ONE
+        # PlaybackServiceHarness may be active at a time — two live harnesses
+        # would fight over the same queue and steal each other's utterances.
+        # Refuse to start rather than corrupt both.
+        if PlaybackServiceHarness._active is not None:
+            raise RuntimeError(
+                "Another PlaybackServiceHarness is already active. "
+                "TTS.queue is process-wide class state, so only one harness "
+                "may run at a time — exit the current one first."
+            )
 
         # Drain any leftover TTS queue from previous tests (class-level state)
         if TTS.queue is not None:
@@ -610,33 +640,53 @@ class PlaybackServiceHarness:
                     TTS.queue.get_nowait()
                 except Exception:
                     break
-        TTS.queue = Queue()
-
-        self.bus = FakeBus(modernize=self.modernize,
-                           emit_legacy=self.emit_legacy)
-        # Inject the provided TTS (real plugin) or fall back to MockTTS.
-        self.mock_tts = self.tts if self.tts is not None else MockTTS()
-
-        # Patch play_audio so no real audio device is accessed. The side_effect
-        # records the first positional arg — the rendered WAV path
-        # (ovos_audio/playback.py: ``self.p = play_audio(data)``) — so callers
-        # can round-trip the synthesised audio through a reference STT.
-        mock_proc = MagicMock()
-        mock_proc.communicate.return_value = (b"", b"")
-        mock_proc.wait.return_value = 0
-
-        self.captured_wavs = []
-
-        def _capture_play_audio(data, *args, **kwargs):
-            self.captured_wavs.append(data)
-            return mock_proc
-
-        self._play_audio_patcher = patch(
-            "ovos_audio.playback.play_audio", side_effect=_capture_play_audio
-        )
-        self._play_audio_patcher.start()
-
+        # Everything from here on mutates process-wide state (TTS.queue, the
+        # _active singleton, the play_audio patch). A failure part-way through
+        # must undo ALL of it: leaving _active set makes every later harness
+        # refuse to start with a bogus "already active" error, and leaving
+        # TTS.queue replaced steals the utterances of every later test.
+        self._play_audio_patcher = None
         try:
+            # Remember the previous queue object so __exit__ can put it back.
+            self._previous_tts_queue = TTS.queue
+            self._replaced_tts_queue = True
+            TTS.queue = Queue()
+            # ``TTSContext._caches`` is keyed by tts_id, so two harnesses
+            # driving the same TTS class share synthesised audio: the second
+            # harness serves the sentence from the first harness's cache and
+            # never calls ``get_tts`` at all. Give each harness its own cache
+            # store so every utterance is really synthesised.
+            self._previous_tts_caches = TTSContext._caches
+            self._replaced_tts_caches = True
+            TTSContext._caches = {}
+            PlaybackServiceHarness._active = self
+
+            self.bus = FakeBus(modernize=self.modernize,
+                               emit_legacy=self.emit_legacy)
+            # Inject the provided TTS (real plugin) or fall back to MockTTS.
+            self.mock_tts = self.tts if self.tts is not None else MockTTS()
+
+            # Patch play_audio so no real audio device is accessed. The
+            # side_effect records the first positional arg — the rendered WAV
+            # path (ovos_audio/playback.py: ``self.p = play_audio(data)``) — so
+            # callers can round-trip the synthesised audio through a
+            # reference STT.
+            mock_proc = MagicMock()
+            mock_proc.communicate.return_value = (b"", b"")
+            mock_proc.wait.return_value = 0
+
+            self.captured_wavs = []
+
+            def _capture_play_audio(data, *args, **kwargs):
+                self.captured_wavs.append(data)
+                return mock_proc
+
+            self._play_audio_patcher = patch(
+                "ovos_audio.playback.play_audio",
+                side_effect=_capture_play_audio
+            )
+            self._play_audio_patcher.start()
+
             # Build the service — passing tts= sets disable_reload = True
             self.svc = PlaybackService(
                 bus=self.bus,
@@ -655,35 +705,60 @@ class PlaybackServiceHarness:
             self.bus.on(SpecMessage.MIC_LISTEN,
                         lambda m: self._mic_listen.set())
 
-        except Exception:
+        except BaseException:
             if self.svc:
                 try:
                     self.svc.shutdown()
                 except Exception:
                     pass
-            self._play_audio_patcher.stop()
-            self.bus.close()
+            if self._play_audio_patcher is not None:
+                try:
+                    self._play_audio_patcher.stop()
+                except RuntimeError:
+                    pass
+                self._play_audio_patcher = None
+            if self.bus is not None:
+                try:
+                    self.bus.close()
+                except Exception:
+                    pass
+            self._release_tts_queue()
             raise
 
         return self
 
+    def _release_tts_queue(self) -> None:
+        """Restore the process-wide TTS state this harness replaced."""
+        if getattr(self, "_replaced_tts_queue", False):
+            TTS.queue = self._previous_tts_queue
+            self._replaced_tts_queue = False
+        if getattr(self, "_replaced_tts_caches", False):
+            from ovos_plugin_manager.templates.tts import TTSContext
+            TTSContext._caches = self._previous_tts_caches
+            self._replaced_tts_caches = False
+        if PlaybackServiceHarness._active is self:
+            PlaybackServiceHarness._active = None
+
     def __exit__(self, *args) -> None:
-        """Shut down PlaybackService and stop patches."""
-        if self.svc:
-            try:
-                self.svc.shutdown()
-            except Exception:
-                pass
-        if self._play_audio_patcher:
-            try:
-                self._play_audio_patcher.stop()
-            except Exception:
-                pass
-        if self.bus:
-            try:
-                self.bus.close()
-            except Exception:
-                pass
+        """Shut down PlaybackService, stop patches, release the TTS queue."""
+        try:
+            if self.svc:
+                try:
+                    self.svc.shutdown()
+                except Exception:
+                    pass
+            if self._play_audio_patcher:
+                try:
+                    self._play_audio_patcher.stop()
+                except Exception:
+                    pass
+            if self.bus:
+                try:
+                    self.bus.close()
+                except Exception:
+                    pass
+        finally:
+            self._release_tts_queue()
     # ------------------------------------------------------------------
     # Control methods
     # ------------------------------------------------------------------

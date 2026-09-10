@@ -38,6 +38,8 @@ Example::
 """
 from __future__ import annotations
 
+import json
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -110,25 +112,43 @@ class OCPTest:
         from ovoscope import get_minicroft  # avoid circular at module level
 
         captured: List[Message] = []
+        got_response = threading.Event()
 
         mc = get_minicroft(self.skill_ids, lang=self.lang, max_wait=60,
                            modernize=self.modernize,
                            emit_legacy=self.emit_legacy)
-        mc.bus.on("message", lambda m: captured.append(
-            Message.deserialize(m) if isinstance(m, str) else m
-        ))
+
+        def _capture(m: Any) -> None:
+            captured.append(Message.deserialize(m) if isinstance(m, str) else m)
+
+        def _on_query_response(_m: Any) -> None:
+            got_response.set()
+
+        mc.bus.on("message", _capture)
+        mc.bus.on("ovos.common_play.query.response", _on_query_response)
 
         src_msg = Message(
             "recognizer_loop:utterance",
             data={"utterances": [self.utterance], "lang": self.lang},
         )
 
-        patches = self._build_patches()
-        with _apply_patches(patches):
-            mc.bus.emit(src_msg)
-            time.sleep(self.timeout * 0.5)  # wait for async OCP responses
-
-        mc.stop()
+        # MiniCroft.stop() restores process-wide globals — it must run even if
+        # emit or a patch raises.
+        try:
+            patches = self._build_patches()
+            with _apply_patches(patches):
+                mc.bus.emit(src_msg)
+                # Wait for the OCP skills to answer instead of sleeping a fixed
+                # fraction of the timeout: fast skills no longer pay the full
+                # wait, slow ones are no longer cut off early.
+                if got_response.wait(self.timeout):
+                    # Several OCP skills answer the same query; give the
+                    # stragglers a short grace period after the first reply.
+                    time.sleep(min(0.5, self.timeout * 0.1))
+        finally:
+            mc.bus.remove("ovos.common_play.query.response", _on_query_response)
+            mc.bus.remove("message", _capture)
+            mc.stop()
 
         assert_ocp_query_response(
             captured,
@@ -147,12 +167,57 @@ class OCPTest:
         if not self.mock_responses:
             return patches
 
-        mock_response = _build_mock_response(self.mock_responses)
-
         targets = list(self.patch_targets) + ["requests.Session.get", "requests.get"]
         for target in targets:
-            patches.append(patch(target, return_value=mock_response))
+            # The side effect must live on the patched GET — that is what
+            # receives the URL. Attaching it to the response mock could never
+            # see a URL, so no configured body ever matched and json() always
+            # returned {}.
+            patches.append(patch(target,
+                                 side_effect=_build_get_side_effect(
+                                     self.mock_responses)))
         return patches
+
+
+def _build_get_side_effect(mock_responses: Dict[str, Any]):
+    """Build a side effect for a patched ``requests`` GET.
+
+    The returned callable receives the request URL (the first positional
+    argument of ``requests.get`` / ``requests.Session.get``) and answers with a
+    response mock whose ``json()`` returns the body configured for the first
+    *mock_responses* key found in that URL.
+
+    Args:
+        mock_responses: URL-substring → response body mapping.
+
+    Returns:
+        A callable suitable for ``patch(..., side_effect=...)``.
+    """
+
+    def _get(*args: Any, **kwargs: Any) -> MagicMock:
+        url = ""
+        for candidate in args:
+            if isinstance(candidate, str):
+                url = candidate
+                break
+        else:
+            url = str(kwargs.get("url", ""))
+
+        body: Any = {}
+        for key, value in mock_responses.items():
+            if key in url:
+                body = value
+                break
+
+        response = MagicMock()
+        response.url = url
+        response.json.return_value = body
+        response.text = json.dumps(body) if isinstance(body, (dict, list)) else str(body)
+        response.status_code = 200
+        response.ok = True
+        return response
+
+    return _get
 
 
 def _build_mock_response(mock_responses: Dict[str, Any]) -> MagicMock:

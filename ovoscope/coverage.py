@@ -35,7 +35,9 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
+from ovos_utils.log import LOG
 
 
 # Entry-point groups that indicate the repo type.
@@ -93,6 +95,9 @@ class EcosystemCoverageReport:
 
     repos: List[RepoCoverage] = field(default_factory=list)
     scan_root: str = ""
+    # (path, reason) for every manifest that could not be parsed. A malformed
+    # pyproject.toml used to be swallowed, which silently understated coverage.
+    parse_errors: List[Tuple[str, str]] = field(default_factory=list)
 
     @property
     def coverage_pct(self) -> float:
@@ -212,7 +217,8 @@ def _find_setup_pys(root: str) -> List[str]:
     return sorted(results)
 
 
-def _parse_setup_py_entry_points(setup_py_path: str) -> Dict[str, List[str]]:
+def _parse_setup_py_entry_points(setup_py_path: str,
+                                 errors: Optional[List[Tuple[str, str]]] = None) -> Dict[str, List[str]]:
     """Extract entry-point groups from a ``setup.py`` file via regex.
 
     Detects lines like::
@@ -239,7 +245,8 @@ def _parse_setup_py_entry_points(setup_py_path: str) -> Dict[str, List[str]]:
     try:
         with open(setup_py_path, "r", encoding="utf-8") as fh:
             source = fh.read()
-    except Exception:
+    except (OSError, UnicodeDecodeError) as exc:
+        _record_error(errors, setup_py_path, f"unreadable: {exc}")
         return eps
 
     # --- Pass 1: collect literal string assignments for ENTRY_POINT variables ---
@@ -290,7 +297,8 @@ def _parse_setup_py_entry_points(setup_py_path: str) -> Dict[str, List[str]]:
     return eps
 
 
-def _parse_entry_points(pyproject_path: str) -> Dict[str, List[str]]:
+def _parse_entry_points(pyproject_path: str,
+                        errors: Optional[List[Tuple[str, str]]] = None) -> Dict[str, List[str]]:
     """Parse entry-point groups from a ``pyproject.toml`` file.
 
     Uses stdlib ``tomllib`` (Python 3.11+) or falls back to line-by-line
@@ -302,18 +310,31 @@ def _parse_entry_points(pyproject_path: str) -> Dict[str, List[str]]:
     Returns:
         Mapping of entry-point group name → list of entry-point IDs.
     """
+    eps: Dict[str, List[str]] = {}
     try:
         import tomllib  # Python 3.11+
-        with open(pyproject_path, "rb") as fh:
-            data = tomllib.load(fh)
-        eps: Dict[str, List[str]] = {}
-        # setuptools style
-        for group, entries in data.get("project", {}).get("entry-points", {}).items():
-            eps[group] = list(entries.keys())
-        # Also check [project.scripts] for CLI tools
-        return eps
-    except (ImportError, Exception):
-        pass
+    except ImportError:
+        try:
+            import tomli as tomllib  # type: ignore[no-redef]
+        except ImportError:
+            tomllib = None  # type: ignore[assignment]
+
+    if tomllib is not None:
+        try:
+            with open(pyproject_path, "rb") as fh:
+                data = tomllib.load(fh)
+            # setuptools style
+            for group, entries in data.get("project", {}).get(
+                    "entry-points", {}).items():
+                eps[group] = list(entries.keys())
+            return eps
+        except tomllib.TOMLDecodeError as exc:
+            # A malformed manifest is a real problem — record it instead of
+            # silently reporting the repo as having no entry points.
+            _record_error(errors, pyproject_path, f"invalid TOML: {exc}")
+        except OSError as exc:
+            _record_error(errors, pyproject_path, f"unreadable: {exc}")
+            return eps
 
     # Fallback: simple line-by-line scan for entry-point group headers
     eps = {}
@@ -331,9 +352,17 @@ def _parse_entry_points(pyproject_path: str) -> Dict[str, List[str]]:
                         eps[current_group].append(key)
                 elif line.startswith("["):
                     current_group = None
-    except Exception:
-        pass
+    except (OSError, IndexError, UnicodeDecodeError) as exc:
+        _record_error(errors, pyproject_path, f"fallback scan failed: {exc}")
     return eps
+
+
+def _record_error(errors: Optional[List[Tuple[str, str]]],
+                  path: str, reason: str) -> None:
+    """Append a parse failure to *errors* and log it."""
+    LOG.warning("ovoscope coverage: %s — %s", path, reason)
+    if errors is not None:
+        errors.append((path, reason))
 
 
 def _has_e2e_tests(repo_root: str) -> bool:
@@ -442,7 +471,8 @@ def scan_workspace(root: str) -> EcosystemCoverageReport:
     # --- pyproject.toml repos ---
     for pyproject_path in _find_pyproject_tomls(root):
         repo_root = os.path.dirname(pyproject_path)
-        entry_point_groups = _parse_entry_points(pyproject_path)
+        entry_point_groups = _parse_entry_points(pyproject_path,
+                                                 report.parse_errors)
         cov = _collect_repo(repo_root, entry_point_groups)
         if cov is not None:
             report.repos.append(cov)
@@ -453,7 +483,8 @@ def scan_workspace(root: str) -> EcosystemCoverageReport:
         repo_root = os.path.dirname(setup_py_path)
         if repo_root in seen_roots:
             continue
-        entry_point_groups = _parse_setup_py_entry_points(setup_py_path)
+        entry_point_groups = _parse_setup_py_entry_points(setup_py_path,
+                                                         report.parse_errors)
         cov = _collect_repo(repo_root, entry_point_groups)
         if cov is not None:
             report.repos.append(cov)

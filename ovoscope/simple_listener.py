@@ -38,6 +38,7 @@ from typing import Any, List, Optional, Union
 
 from ovos_bus_client.message import Message
 from ovos_utils.fakebus import FakeBus
+from ovos_utils.log import LOG
 
 from ovoscope.voice_loop import (
     ListenerHarness,
@@ -144,7 +145,10 @@ class MiniSimpleListener(ListenerHarness):
             wakeword = MockHotWordEngine("hey_mycroft", trigger_after=2)
 
         self.callbacks = _SimpleBusCallbacks(self.bus)
-        self.listener = SimpleListener(
+        self._listener_cls = SimpleListener
+        # Kept so a wedged listener thread can be replaced with a fresh object
+        # instead of being reused (see feed_file).
+        self._listener_kwargs = dict(
             wakeword=wakeword,
             mic=None,  # supplied per-run by feed_file
             vad=vad_instance if vad_instance is not None else MockVADEngine(),
@@ -154,6 +158,11 @@ class MiniSimpleListener(ListenerHarness):
             max_speech_seconds=max_speech_seconds,
             callbacks=self.callbacks,
         )
+        self.listener = self._listener_cls(**self._listener_kwargs)
+
+    def _new_listener(self) -> Any:
+        """Build a fresh listener object from the original constructor args."""
+        return self._listener_cls(**self._listener_kwargs)
 
     def feed_file(
         self,
@@ -193,6 +202,16 @@ class MiniSimpleListener(ListenerHarness):
         finally:
             self.listener.stop()
             self.listener.join(timeout=2.0)
+            if self.listener.is_alive():
+                # The thread refused to die. Reusing it would let it keep
+                # appending to `_messages` during the NEXT run. Abandon it
+                # (it is a daemon of the test process) and start clean.
+                LOG.warning(
+                    "MiniSimpleListener: listener thread still alive 2s after "
+                    "stop(); abandoning it and building a fresh listener for "
+                    "the next run to avoid cross-run message pollution."
+                )
+                self.listener = self._new_listener()
 
         self._last_messages = list(self._messages)
         return list(self._messages)

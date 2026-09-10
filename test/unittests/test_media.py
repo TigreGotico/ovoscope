@@ -300,6 +300,28 @@ class TestOCPPlayerHarnessBackendInjection:
             assert h.backend.play_calls == ["library://track/42"]
 
 
+@pytest.mark.skipif(not _HAS_OVOS_MEDIA,
+                    reason="requires the [media] extra (ovos-media)")
+class TestOCPHarnessRealPlaylistIsinstance:
+    """A genuine ovos_utils.ocp.Playlist must satisfy the isinstance checks
+    inside ovos_media.player.set_now_playing when driven through the harness.
+
+    A harness that swaps ``ovos_media.player.Playlist`` for a local subclass
+    would make this fail: set_now_playing does `isinstance(track, Playlist)`
+    against the *module-global* name, so a caller passing a real Playlist
+    would be rejected as neither a MediaEntry nor a Playlist.
+    """
+
+    def test_real_playlist_passes_isinstance_in_set_now_playing(self) -> None:
+        from ovos_utils.ocp import MediaEntry, Playlist, PlaybackType
+
+        with OCPPlayerHarness() as h:
+            entry = MediaEntry(uri="library://track/1", playback=PlaybackType.AUDIO)
+            playlist = Playlist(entry)
+            h.player.set_now_playing(playlist)
+            assert h.player.now_playing.uri == "library://track/1"
+
+
 # ---------------------------------------------------------------------------
 # Namespace bridging
 # ---------------------------------------------------------------------------
@@ -360,3 +382,102 @@ class TestOCPHarnessNamespaceBridging:
             h.bus.emit(Message(str(SpecMessage.LISTENER_RECORD_STARTED)))
             time.sleep(0.2)  # give any (incorrect) bridge a chance to fire
             h.assert_player_state(PlayerState.PLAYING)
+
+
+@pytest.mark.skipif(not _HAS_OVOS_MEDIA,
+                    reason="requires the [media] extra (ovos-media)")
+class TestOCPHarnessDuckUnduckEmitsSpecTopics:
+    """``duck()``/``unduck()`` simulate what the real ``ovos-audio`` service
+    emits on speech begin/end — the spec topics ``ovos.audio.output.started``/
+    ``ended`` — not the legacy ``recognizer_loop:audio_output_*`` aliases.
+
+    Bridging is turned off here (``modernize=False, emit_legacy=False``) so
+    the assertion pins the topic the *producer* actually emits, rather than
+    one FakeBus synthesizes from the other namespace."""
+
+    def test_duck_emits_spec_topic(self) -> None:
+        with OCPPlayerHarness(modernize=False, emit_legacy=False) as h:
+            seen = []
+            h.bus.on("ovos.audio.output.started", lambda m: seen.append(m))
+            h.duck()
+            assert seen, "duck() did not emit ovos.audio.output.started"
+
+    def test_unduck_emits_spec_topic(self) -> None:
+        with OCPPlayerHarness(modernize=False, emit_legacy=False) as h:
+            seen = []
+            h.bus.on("ovos.audio.output.ended", lambda m: seen.append(m))
+            h.unduck()
+            assert seen, "unduck() did not emit ovos.audio.output.ended"
+
+
+@pytest.mark.skipif(not _HAS_OVOS_MEDIA,
+                    reason="requires the [media] extra (ovos-media)")
+class TestOCPHarnessWithoutGUIInterface:
+    """Newer ``ovos-media`` builds have dropped in-core GUI integration
+    entirely, so ``ovos_media.player`` no longer defines ``GUIInterface``.
+    The harness must still start up against such a build instead of
+    AttributeError-ing on an unconditional patch target."""
+
+    def test_enter_succeeds_when_gui_interface_symbol_is_absent(self) -> None:
+        import ovos_media.player as ocp_player_module
+
+        had_symbol = hasattr(ocp_player_module, "GUIInterface")
+        removed = None
+        if had_symbol:
+            removed = ocp_player_module.GUIInterface
+            del ocp_player_module.GUIInterface
+        try:
+            assert not hasattr(ocp_player_module, "GUIInterface")
+            with OCPPlayerHarness() as h:
+                assert h.player is not None
+        except NameError as e:
+            # An installed ovos-media that still carries in-core GUI
+            # integration references GUIInterface directly from
+            # OCPMediaPlayer.__init__, independent of the harness's own
+            # patch logic — deleting the symbol out from under it simulates
+            # a state that build can never actually be in. This scenario
+            # only exercises the harness against a build that has genuinely
+            # dropped the symbol.
+            if "GUIInterface" not in str(e):
+                raise
+            pytest.skip("installed ovos-media still uses GUIInterface "
+                        "internally; this build cannot run without it")
+        finally:
+            if had_symbol:
+                ocp_player_module.GUIInterface = removed
+
+
+@pytest.mark.skipif(not _HAS_OVOS_MEDIA,
+                    reason="requires the [media] extra (ovos-media)")
+class TestOCPHarnessWithoutHandlePlay:
+    """Newer ``ovos-media`` builds dropped the per-namespace
+    ``ovos.{ns}.service.play`` bus surface entirely — ``AudioService`` (and
+    its ``BaseMediaService`` parent) no longer define ``handle_play``;
+    ``pause``/``resume``/``stop`` survive as plain methods called directly by
+    ``OCPMediaPlayer``. The real-backend-factory path of the harness must
+    still start up, and playback must still work end-to-end, against a
+    build without ``handle_play``."""
+
+    def test_enter_and_play_succeed_when_handle_play_is_absent(self) -> None:
+        from ovos_media.media_backends.audio import AudioService
+        from ovos_media.media_backends.base import BaseMediaService
+
+        # handle_play is inherited from BaseMediaService — not AudioService's
+        # own attribute — so it must be removed at its defining class.
+        had_symbol = hasattr(BaseMediaService, "handle_play")
+        removed = None
+        if had_symbol:
+            removed = BaseMediaService.handle_play
+            del BaseMediaService.handle_play
+        try:
+            assert not hasattr(AudioService, "handle_play")
+            from ovos_utils.ocp import MediaEntry, PlaybackType
+            with OCPPlayerHarness(backend_factory=_RecordingBackend) as h:
+                assert h.player is not None
+                h.play(MediaEntry(uri="library://track/42",
+                                  playback=PlaybackType.AUDIO))
+                assert h.backend.is_playing is True
+                assert h.backend.play_calls == ["library://track/42"]
+        finally:
+            if had_symbol:
+                BaseMediaService.handle_play = removed

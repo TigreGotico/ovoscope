@@ -7,7 +7,7 @@ and namespace teardown without cluttering the main message capture.
 ## Why GUI Messages Are Separate
 
 `End2EndTest` filters `gui.*` messages out by default (`ignore_gui=True`). This is
-deliberate — GUI namespace churn (``gui.value.set``, ``gui.clear.namespace``) is
+deliberate: GUI namespace churn (``gui.value.set``, ``gui.clear.namespace``) is
 high-frequency and rarely the focus of intent/dialogue tests. `GUICaptureSession`
 provides a complementary, opt-in capture layer for tests that *do* care about GUI
 state.
@@ -65,7 +65,7 @@ mc.stop()
 
 ## Class: `GUICaptureSession`
 
-`GUICaptureSession` — `ovoscope/__init__.py:951`
+`GUICaptureSession`: `ovoscope/__init__.py`
 
 ```python
 from ovoscope import GUICaptureSession
@@ -89,7 +89,7 @@ recording GUI-prefixed messages.
 
 ### Lifecycle Methods
 
-`GUICaptureSession.start` — `ovoscope/__init__.py:1000`
+`GUICaptureSession.start`: `ovoscope/__init__.py`
 
 ```python
 gui = GUICaptureSession(mc.bus)
@@ -103,16 +103,16 @@ gui.stop()
 | `start()` | Subscribe to the bus and begin capturing. |
 | `stop()` | Unsubscribe from the bus and stop capturing. |
 
-`GUICaptureSession.__enter__` / `__exit__` — `ovoscope/__init__.py:1008`
+`GUICaptureSession.__enter__` / `__exit__`: `ovoscope/__init__.py`
 
 The preferred usage is as a context manager. `__enter__` calls `start()`;
 `__exit__` calls `stop()`.
 
 ### Assertion Methods
 
-#### `assert_page_shown(namespace, page, timeout=2.0)`
+#### `assert_page_shown(namespace, page, timeout=2.0, exact=True)`
 
-`GUICaptureSession.assert_page_shown` — `ovoscope/__init__.py:1017`
+`GUICaptureSession.assert_page_shown`: `ovoscope/__init__.py`
 
 Assert that a `gui.page.show` (or equivalent) message was emitted for the
 given namespace and page filename.
@@ -126,16 +126,19 @@ gui.assert_page_shown("helloworldskill", "hello.qml", timeout=3.0)
 | `namespace` | `str` | **required** | GUI namespace (typically the skill ID slug, e.g. `"helloworldskill"`). |
 | `page` | `str` | **required** | QML page filename (e.g. `"hello.qml"`). |
 | `timeout` | `float` | `2.0` | Max seconds to poll captured messages before failing. |
+| `exact` | `bool` | `True` | Exact matching: the namespace must be equal, and the page must equal the shown page's basename. Pass `exact=False` for the legacy substring behavior. |
 
 Raises `AssertionError` if no matching message is found within `timeout`.
 
 The method checks both `msg.data["namespace"]` / `msg.context["skill_id"]`
 for the namespace, and `msg.data["pages"]` / `msg.data["page"]` for the
-page name. Substring matching is used for both.
+page name. By default both use exact matching (`namespace ==`, page
+basename `==`), so a near-miss like `hello.qml.bak` or a longer namespace
+that merely contains yours cannot satisfy the assertion.
 
-#### `assert_namespace_value(namespace, key, value)`
+#### `assert_namespace_value(namespace, key, value, exact=True)`
 
-`GUICaptureSession.assert_namespace_value` — `ovoscope/__init__.py:1046`
+`GUICaptureSession.assert_namespace_value`: `ovoscope/__init__.py`
 
 Assert that a `gui.value.set` or `gui.namespace.update` message set a
 specific key to a specific value in the given namespace.
@@ -152,9 +155,9 @@ gui.assert_namespace_value("helloworldskill", "greeting", "Hello!")
 
 Raises `AssertionError` if no matching message is found.
 
-#### `assert_namespace_has_key(namespace, key)`
+#### `assert_namespace_has_key(namespace, key, exact=True)`
 
-`GUICaptureSession.assert_namespace_has_key` — `ovoscope/__init__.py:1093`
+`GUICaptureSession.assert_namespace_has_key`: `ovoscope/__init__.py`
 
 Assert that a `gui.value.set` or `gui.namespace.update` message set a
 specific key in the given namespace, regardless of value. Useful for
@@ -172,12 +175,14 @@ gui.assert_namespace_has_key("weatherskill", "current_temp")
 
 Raises `AssertionError` if no matching message is found.
 
-#### `assert_namespace_cleared(namespace)`
+#### `assert_namespace_cleared(namespace, exact=True)`
 
-`GUICaptureSession.assert_namespace_cleared` — `ovoscope/__init__.py:1069`
+`GUICaptureSession.assert_namespace_cleared`: `ovoscope/__init__.py`
 
-Assert that a `gui.namespace.remove` or `gui.namespace.clear` message was
-emitted for the given namespace.
+Assert that a `gui.namespace.remove`, `gui.namespace.clear`, or
+`gui.clear.namespace` message was emitted for the given namespace —
+`gui.clear.namespace` is the topic the GUI service actually emits at
+runtime. The namespace comparison is exact unless `exact=False`.
 
 ```python
 gui.assert_namespace_cleared("helloworldskill")
@@ -188,7 +193,7 @@ Raises `AssertionError` if no matching message is found.
 ## Message Filtering
 
 Only messages whose `msg_type` starts with one of the configured `prefixes`
-are captured — `GUICaptureSession._on_message` — `ovoscope/__init__.py:984`.
+are captured: `GUICaptureSession._on_message`: `ovoscope/__init__.py`.
 All other bus messages are ignored.
 
 Default captured message types (partial list):
@@ -213,7 +218,7 @@ with GUICaptureSession(mc.bus) as gui:
         minicroft=mc,
         source_message=utterance,
         expected_messages=[...],
-        ignore_gui=True,   # default — keeps End2EndTest clean
+        ignore_gui=True,   # default: keeps End2EndTest clean
     )
     test.execute()
     # Now assert GUI state separately
@@ -246,20 +251,23 @@ with GUICaptureSession(mc.bus) as gui:
 ```
 
 This is the recommended assertion for the template-based GUI: it does not care
-which display backend (Qt, pyhtmx, …) renders the template — only that the skill
+which display backend (Qt, pyhtmx, …) renders the template: only that the skill
 requested the right `SYSTEM_*` template with the right session data.
 
 ## What `GUICaptureSession` Does NOT Cover
 
-- Full GUI rendering — only bus messages are captured; no QML engine is run.
-- `ovos-gui` service behaviour — only the `FakeBus` in-process messages are
+- Full GUI rendering: only bus messages are captured; no QML engine is run.
+- `ovos-gui` service behaviour: only the `FakeBus` in-process messages are
   captured; messages sent to a real GUI over WebSocket are not included.
 - GUI framework events not prefixed with `gui.` or `mycroft.gui.` (these can
   be added via the `prefixes` constructor argument).
 
 ## Cross-References
 
-- `CaptureSession` — `ovoscope/docs/capture-session.md` (ordered dialogue capture)
-- `End2EndTest` — `ovoscope/docs/end2end-test.md` (full test runner)
-- `MiniCroft` / `get_minicroft()` — `ovoscope/docs/minicroft.md`
-- `GUI_IGNORED` message list — `ovoscope/__init__.py:24`
+- `CaptureSession`: `ovoscope/docs/capture-session.md` (ordered dialogue capture)
+- `End2EndTest`: `ovoscope/docs/end2end-test.md` (full test runner)
+- `MiniCroft` / `get_minicroft()`: `ovoscope/docs/minicroft.md`
+- `GUI_IGNORED` message list: `ovoscope/__init__.py`
+
+---
+[← Voice Loop](voice-loop.md) · [Home](../README.md) · [Bus Coverage →](bus-coverage.md)

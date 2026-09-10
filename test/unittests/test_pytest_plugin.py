@@ -107,3 +107,41 @@ class TestMinicroftFixtureLogic(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestModuleLevelSkipDoesNotAbortCollection:
+    """Regression test: a module-level ``pytest.importorskip()``/``pytest.skip()``
+    used to abort the *entire* collection session instead of skipping just
+    that one module.
+
+    ``pytest.skip.Exception`` subclasses ``BaseException`` (via
+    ``_pytest.outcomes.OutcomeException``), not ``Exception``. The ovoscope
+    ``pytest_pycollect_makemodule`` hook wrapper imports every collected
+    module eagerly (to look for the ``ovoscope_intent_cases`` shim marker)
+    guarded only by ``except Exception``. That guard never sees the skip
+    exception, so it escapes the hook wrapper uncaught and pytest reports
+    "found no collectors" / exit code 5 for the whole run, even though only
+    one of the test files actually wanted to be skipped.
+    """
+
+    def test_importorskip_module_does_not_nuke_collection(self, pytester):
+        pytester.makepyfile(
+            test_skips_at_import="""
+            import pytest
+            pytest.importorskip("this_module_does_not_exist_xyz")
+
+            def test_never_runs():
+                assert False
+            """
+        )
+        pytester.makepyfile(
+            test_plain="""
+            def test_ok():
+                assert True
+            """
+        )
+
+        result = pytester.runpytest()
+
+        result.assert_outcomes(passed=1, skipped=1)
+        assert result.ret == 0

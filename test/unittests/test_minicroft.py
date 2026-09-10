@@ -1,6 +1,9 @@
 """Unit tests for MiniCroft and get_minicroft()."""
+import os
 import threading
+import time
 import unittest
+from unittest.mock import patch
 
 from ovos_bus_client.message import Message
 from ovos_spec_tools import SpecMessage
@@ -9,7 +12,10 @@ from ovos_workshop.skills.ovos import OVOSSkill
 
 from ovos_bus_client.session import SessionManager
 
-from ovoscope import MiniCroft, get_minicroft, DEFAULT_TEST_PIPELINE, LIGHT_TEST_PIPELINE, ADAPT_PIPELINE
+from ovoscope import _wait_for_trained, _pending_trainers, _trainers
+from ovoscope import (MiniCroft, get_minicroft, DEFAULT_TEST_PIPELINE,
+                      LIGHT_TEST_PIPELINE, ADAPT_PIPELINE, LEAN_DEFAULT_PIPELINE,
+                      M2V_PIPELINE, PERSONA_PIPELINE, is_pipeline_available)
 
 LEGACY_UTTERANCE = "recognizer_loop:utterance"
 SPEC_UTTERANCE = str(SpecMessage.UTTERANCE)  # ovos.utterance.handle
@@ -83,6 +89,69 @@ class TestGetMiniCroft(unittest.TestCase):
         finally:
             mc.stop()
 
+    def test_boot_and_stop_without_default_session_class_attribute(self):
+        """ovos-spec-tools>=1.10.5a2 removed SessionManager.default_session as a
+        class attribute; get_minicroft() must only ever go through
+        get_default_session()/the sessions registry, never that mirror."""
+        had_attr = "default_session" in vars(SessionManager)
+        original = vars(SessionManager).get("default_session")
+        if had_attr:
+            delattr(SessionManager, "default_session")
+        try:
+            mc = get_minicroft([])
+            try:
+                self.assertIsInstance(mc, MiniCroft)
+            finally:
+                mc.stop()
+        finally:
+            if had_attr:
+                SessionManager.default_session = original
+
+    def test_basedexception_during_boot_still_stops_croft(self):
+        """A BaseException (e.g. pytest-timeout's Failed, or a real
+        KeyboardInterrupt) raised while waiting for READY must still trigger
+        croft.stop() before propagating. Regression test for get_minicroft's
+        cleanup handler only catching `Exception`, which let BaseException
+        subclasses skip cleanup and leak the started MiniCroft process."""
+        with patch.object(MiniCroft, "start", side_effect=KeyboardInterrupt), \
+             patch.object(MiniCroft, "stop") as mock_stop:
+            with self.assertRaises(KeyboardInterrupt):
+                get_minicroft([])
+            mock_stop.assert_called_once()
+
+
+class TestMiniCroftSessionManagerBusRestore(unittest.TestCase):
+    """MiniCroft must not leak its FakeBus into the process-wide
+    SessionManager.bus class attribute after stop().
+
+    IntentService.__init__ calls SessionManager.connect_to_bus(self.bus),
+    clobbering SessionManager.bus with MiniCroft's FakeBus. If stop() doesn't
+    restore it, later tests in the same process — e.g. ones using a plain
+    FakeBus and calling SessionManager.wait_while_speaking() — hit the
+    `if not cls.bus` guard with a stale, truthy, dead bus and block/register
+    listeners on the wrong bus.
+    """
+
+    def setUp(self):
+        LOG.set_level("ERROR")
+
+    def tearDown(self):
+        LOG.set_level("CRITICAL")
+
+    def test_sessionmanager_bus_restored_after_stop(self):
+        sentinel = object()
+        SessionManager.bus = sentinel
+        try:
+            mc = get_minicroft([])
+            # while running, MiniCroft's own FakeBus has taken over
+            self.assertIs(SessionManager.bus, mc.bus)
+            mc.stop()
+            self.assertIs(SessionManager.bus, sentinel,
+                          "SessionManager.bus must be restored to its "
+                          "pre-boot value after MiniCroft.stop()")
+        finally:
+            SessionManager.bus = None
+
 
 class TestMiniCroftPipelineIsolation(unittest.TestCase):
     """Tests for MiniCroft default_pipeline override."""
@@ -94,29 +163,30 @@ class TestMiniCroftPipelineIsolation(unittest.TestCase):
         LOG.set_level("CRITICAL")
 
     def test_default_pipeline_overrides_default_session(self):
-        """default_pipeline is applied to SessionManager.default_session."""
+        """default_pipeline is applied to SessionManager.get_default_session()."""
         mc = get_minicroft([], default_pipeline=ADAPT_PIPELINE)
         try:
-            self.assertEqual(SessionManager.default_session.pipeline, ADAPT_PIPELINE)
+            self.assertEqual(SessionManager.get_default_session().pipeline, ADAPT_PIPELINE)
         finally:
             mc.stop()
 
     def test_default_pipeline_restored_after_stop(self):
         """After stop(), default_session.pipeline is restored to its previous value."""
-        original = SessionManager.default_session.pipeline[:]
+        original = SessionManager.get_default_session().pipeline[:]
         mc = get_minicroft([], default_pipeline=ADAPT_PIPELINE)
         mc.stop()
-        self.assertEqual(SessionManager.default_session.pipeline, original)
+        self.assertEqual(SessionManager.get_default_session().pipeline, original)
 
-    def test_isolate_config_uses_default_test_pipeline(self):
-        """isolate_config=True with no explicit default_pipeline uses DEFAULT_TEST_PIPELINE or fallback."""
+    def test_isolate_config_uses_lean_default_pipeline(self):
+        """isolate_config=True with no explicit default_pipeline uses LEAN_DEFAULT_PIPELINE or fallback."""
         mc = get_minicroft([])
         try:
-            # If all plugins are installed, it uses DEFAULT_TEST_PIPELINE.
-            # Otherwise it falls back to LIGHT_TEST_PIPELINE.
-            # Both are valid outcomes of the "isolation + default" logic.
-            self.assertIn(mc.pipeline, [DEFAULT_TEST_PIPELINE, LIGHT_TEST_PIPELINE])
-            self.assertEqual(SessionManager.default_session.pipeline, mc.pipeline)
+            # If all plugins are installed, it uses LEAN_DEFAULT_PIPELINE.
+            # Otherwise it falls back to DEFAULT_TEST_PIPELINE/LIGHT_TEST_PIPELINE.
+            # All three are valid outcomes of the "isolation + default" logic.
+            self.assertIn(mc.pipeline,
+                          [LEAN_DEFAULT_PIPELINE, DEFAULT_TEST_PIPELINE, LIGHT_TEST_PIPELINE])
+            self.assertEqual(SessionManager.get_default_session().pipeline, mc.pipeline)
         finally:
             mc.stop()
 
@@ -129,10 +199,10 @@ class TestMiniCroftPipelineIsolation(unittest.TestCase):
 
     def test_no_pipeline_override_when_none(self):
         """default_pipeline=None must not alter the existing default session pipeline."""
-        before = SessionManager.default_session.pipeline[:]
+        before = SessionManager.get_default_session().pipeline[:]
         mc = get_minicroft([], isolate_config=False, default_pipeline=None)
         try:
-            self.assertEqual(SessionManager.default_session.pipeline, before)
+            self.assertEqual(SessionManager.get_default_session().pipeline, before)
         finally:
             mc.stop()
 
@@ -398,5 +468,468 @@ class TestMiniCroftNamespaceBridging(unittest.TestCase):
             mc.stop()
 
 
+class TestSkillManagerKwargCompat(unittest.TestCase):
+    """The latest ovoscope must boot against older ovos-core SkillManager
+    releases that predate newer ``enable_*`` keyword arguments (the stable
+    release channel ships ovos-core 1.3.x, whose SkillManager has no
+    ``enable_installer``). MiniCroft must forward only the flags the installed
+    SkillManager actually accepts instead of raising TypeError and failing to
+    boot."""
+
+    def test_unsupported_enable_kwargs_are_dropped(self):
+        import ovoscope
+        from unittest.mock import patch
+
+        captured = {}
+
+        class _Reached(Exception):
+            """Raised from the fake old __init__ once kwarg filtering passed."""
+
+        # Simulate an OLD SkillManager whose signature lacks enable_installer,
+        # enable_file_watcher, enable_intent_service and enable_event_scheduler.
+        def old_init(self, bus=None, enable_skill_api=True):
+            captured["bus"] = bus
+            captured["enable_skill_api"] = enable_skill_api
+            raise _Reached
+
+        with patch.object(ovoscope.SkillManager, "__init__", old_init):
+            # If filtering failed, old_init would get enable_installer=... and
+            # raise TypeError *before its body* -> captured stays empty.
+            try:
+                MiniCroft([SKILL_ID])
+            except Exception:
+                pass
+
+        self.assertTrue(
+            captured,
+            "SkillManager.__init__ was never reached: an unsupported kwarg "
+            "was forwarded, so the latest ovoscope cannot boot on older core")
+        self.assertTrue(captured["enable_skill_api"],
+                        "a supported enable_* flag must still be forwarded")
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# Trained-quiet-window wait (get_minicroft)
+# ---------------------------------------------------------------------------
+class RegistersIntentSkill(OVOSSkill):
+    """Emits 'register_intent' with context['skill_id'] set, exactly as
+    _AdaptIntentApi.register_intent (ovos_workshop.intents) always stamps
+    it before emitting, but never fires 'mycroft.skills.trained' itself —
+    used to simulate a pipeline plugin that never reports training done."""
+
+    def initialize(self):
+        self.bus.emit(Message("register_intent", {"name": "unittest.stub"},
+                              {"skill_id": self.skill_id}))
+
+
+class RegistersAndTrainsSkill(OVOSSkill):
+    """Emits 'register_intent' (with context['skill_id'] stamped, as adapt
+    does) then 'mycroft.skills.trained', like a real pipeline plugin
+    finishing a training pass."""
+
+    def initialize(self):
+        self.bus.emit(Message("register_intent", {"name": "unittest.stub"},
+                              {"skill_id": self.skill_id}))
+        self.bus.emit(Message("mycroft.skills.trained"))
+
+
+class StuckTrainerSkill(OVOSSkill):
+    """Subscribes a no-op handler to 'mycroft.skills.train' (so a trainer
+    is present on the bus) then registers an intent, exactly like
+    RegistersIntentSkill, but never emits 'mycroft.skills.trained' — used
+    to simulate a pipeline plugin that starts a training pass and never
+    finishes it."""
+
+    def initialize(self):
+        self.bus.on("mycroft.skills.train", lambda message: None)
+        self.bus.emit(Message("register_intent", {"name": "unittest.stub"},
+                              {"skill_id": self.skill_id}))
+
+
+class TestTrainedQuietWindow(unittest.TestCase):
+
+    def setUp(self):
+        LOG.set_level("ERROR")
+
+    def tearDown(self):
+        LOG.set_level("CRITICAL")
+
+    @patch.dict("os.environ", {"OVOSCOPE_TRAINED_TIMEOUT": "5"})
+    def test_no_intents_registered_skips_wait(self):
+        """Nothing registered an intent -> get_minicroft must not spend the
+        bound waiting on 'mycroft.skills.trained' (mirrors padatious'
+        needs_compile: nothing to train, nothing to wait for). Timed rather
+        than counting bus events: a trainer with empty containers may report
+        a pass anyway, and whether that report lands before the boot returns
+        is a race, not a contract."""
+        skill_id = "ovoscope-unittest-no-intents.test"
+        started = time.time()
+        mc = get_minicroft([skill_id], extra_skills={skill_id: PingSkill})
+        elapsed = time.time() - started
+        try:
+            self.assertEqual(mc._registered_skill_ids, set())
+            self.assertLess(elapsed, 5.0,
+                            "boot spent the trained bound waiting for a "
+                            "training pass that was never needed")
+        finally:
+            mc.stop()
+
+    def test_trained_event_lets_quiet_window_elapse_and_return(self):
+        """An intent was registered and 'mycroft.skills.trained' arrived ->
+        get_minicroft must record it and return once the quiet window
+        elapses, without raising."""
+        skill_id = "ovoscope-unittest-trains.test"
+        mc = get_minicroft([skill_id],
+                           extra_skills={skill_id: RegistersAndTrainsSkill})
+        try:
+            self.assertEqual(mc._registered_skill_ids, {skill_id})
+            self.assertTrue(mc._trained_times,
+                            "no 'mycroft.skills.trained' was recorded")
+            self.assertEqual(_pending_trainers(mc), [],
+                             "returned with a trainer still holding work")
+        finally:
+            mc.stop()
+
+    @patch.dict("os.environ", {"OVOSCOPE_TRAINED_TIMEOUT": "0.3"})
+    def test_never_trained_raises_naming_skill(self):
+        """A trainer is subscribed to 'mycroft.skills.train' (StuckTrainerSkill)
+        and an intent was registered, but 'mycroft.skills.trained' never
+        arrives within the bound -> get_minicroft must raise loudly, never
+        proceed silently as if it were READY and trained. Booted on the
+        adapt pipeline so no padatious-family plugin can emit the reply
+        behind the test's back."""
+        skill_id = "ovoscope-unittest-stuck.test"
+        with self.assertRaises(RuntimeError) as ctx:
+            get_minicroft([skill_id],
+                          extra_skills={skill_id: StuckTrainerSkill},
+                          default_pipeline=ADAPT_PIPELINE)
+        self.assertIn(skill_id, str(ctx.exception))
+        self.assertIn("mycroft.skills.trained", str(ctx.exception))
+
+    @patch.dict("os.environ", {"OVOSCOPE_TRAINED_TIMEOUT": "0.3"})
+    def test_never_trained_raises_naming_only_stuck_skill(self):
+        """A mixed load: one skill subscribes a trainer to
+        'mycroft.skills.train', registers an intent, and never gets
+        trained; another skill registers no intent at all. The raised
+        error must name ONLY the stuck skill — an intentless skill loaded
+        alongside a hung trainer must never be blamed. Booted on the adapt
+        pipeline so no padatious-family plugin can emit the reply behind
+        the test's back."""
+        stuck_id = "ovoscope-unittest-stuck-mixed.test"
+        intentless_id = "ovoscope-unittest-intentless-mixed.test"
+        with self.assertRaises(RuntimeError) as ctx:
+            get_minicroft([stuck_id, intentless_id],
+                          extra_skills={stuck_id: StuckTrainerSkill,
+                                        intentless_id: PingSkill},
+                          default_pipeline=ADAPT_PIPELINE)
+        message = str(ctx.exception)
+        self.assertIn(stuck_id, message)
+        self.assertNotIn(intentless_id, message)
+
+    def test_wait_for_trained_false_opts_out(self):
+        """wait_for_trained=False must skip the wait/raise entirely even
+        when an intent was registered and never trained."""
+        skill_id = "ovoscope-unittest-optout.test"
+        mc = get_minicroft([skill_id],
+                           extra_skills={skill_id: RegistersIntentSkill},
+                           wait_for_trained=False)
+        try:
+            self.assertEqual(mc._registered_skill_ids, {skill_id})
+            self.assertEqual(mc._trained_times, [])
+        finally:
+            mc.stop()
+
+    @patch.dict("os.environ", {"OVOSCOPE_TRAINED_TIMEOUT": "0.3"})
+    def test_no_trainer_subscribed_skips_wait(self):
+        """m2v registers intents but no plugin on the bus ever subscribes to
+        'mycroft.skills.train', so nothing will ever emit
+        'mycroft.skills.trained' -> get_minicroft must return at READY
+        instead of waiting out the bound and raising (OpenVoiceOS/ovoscope#179)."""
+        if not is_pipeline_available(M2V_PIPELINE):
+            raise unittest.SkipTest("ovos-m2v-pipeline plugin not installed")
+        skill_id = "ovoscope-unittest-m2v-no-trainer.test"
+        mc = get_minicroft([skill_id],
+                           extra_skills={skill_id: RegistersIntentSkill},
+                           default_pipeline=M2V_PIPELINE)
+        try:
+            self.assertEqual(mc._registered_skill_ids, {skill_id})
+            self.assertEqual(mc._trained_times, [])
+            self.assertEqual(mc.bus.ee.listeners("mycroft.skills.train"), [])
+        finally:
+            mc.stop()
+
+    @patch.dict("os.environ", {"OVOSCOPE_TRAINED_TIMEOUT": "0.3"})
+    def test_no_trainer_subscribed_skips_wait_adapt_only(self):
+        """Same as above with adapt, which is always installed, so this
+        regression is exercised in every run of the suite, never skipped."""
+        skill_id = "ovoscope-unittest-adapt-no-trainer.test"
+        mc = get_minicroft([skill_id],
+                           extra_skills={skill_id: RegistersIntentSkill},
+                           default_pipeline=ADAPT_PIPELINE)
+        try:
+            self.assertEqual(mc._registered_skill_ids, {skill_id})
+            self.assertEqual(mc._trained_times, [])
+            self.assertEqual(mc.bus.ee.listeners("mycroft.skills.train"), [])
+        finally:
+            mc.stop()
+
+    def test_lean_default_pipeline_has_a_trainer(self):
+        """Detection premise: the lean default (padacioso/padatious) does
+        subscribe to 'mycroft.skills.train'. If this ever stops holding,
+        the wait-skip logic above would start skipping every boot's wait
+        silently, so this must never regress unnoticed."""
+        skill_id = "ovoscope-unittest-lean-has-trainer.test"
+        pipeline = (LEAN_DEFAULT_PIPELINE
+                    if is_pipeline_available(LEAN_DEFAULT_PIPELINE)
+                    else LIGHT_TEST_PIPELINE)
+        mc = get_minicroft([skill_id], extra_skills={skill_id: PingSkill},
+                           default_pipeline=pipeline, wait_for_trained=False)
+        try:
+            self.assertTrue(mc.bus.ee.listeners("mycroft.skills.train"))
+        finally:
+            mc.stop()
+
+
+class TestMiniCroftLeanBootDefault(unittest.TestCase):
+    """The lean default pipeline must boot ONLY the matcher families the
+    ovoscope suite (and skill-fixture suites built on it) actually assert
+    against — heavier installed pipeline plugins (m2v, persona, common_query,
+    OCP, ...) must never be instantiated by default, and must stay opt-in via
+    `extra_pipelines=`/`default_pipeline=`.
+    """
+
+    def setUp(self):
+        LOG.set_level("ERROR")
+
+    def tearDown(self):
+        LOG.set_level("CRITICAL")
+
+    def test_lean_default_excludes_heavy_pipelines(self):
+        """LEAN_DEFAULT_PIPELINE must not reference m2v/persona/common_query/OCP."""
+        for stage in LEAN_DEFAULT_PIPELINE:
+            self.assertNotIn("m2v", stage, f"m2v stage found: {stage}")
+            self.assertNotIn("persona", stage, f"persona stage found: {stage}")
+            self.assertNotIn("common-query", stage, f"common_query stage found: {stage}")
+            self.assertNotIn("ocp", stage, f"OCP stage found: {stage}")
+            self.assertNotIn("-low", stage, f"-low tier stage found: {stage}")
+
+    def test_lean_default_boots_only_lean_plugins(self):
+        """A lean-default MiniCroft must not instantiate heavy pipeline
+        plugins that ARE installed but not part of the lean set — this is
+        the actual fix: `intents.pipeline` alone does not stop IntentService
+        from loading every installed plugin, only `blacklisted_pipelines`
+        does.
+        """
+        if not is_pipeline_available(LEAN_DEFAULT_PIPELINE):
+            raise unittest.SkipTest("lean pipeline plugins not installed")
+        mc = get_minicroft([], wait_for_trained=False)
+        try:
+            loaded = set(mc.intents.pipeline_plugins.keys())
+            for heavy in ("ovos-m2v-pipeline", "ovos-m2v-prototype-pipeline",
+                         "ovos-persona-pipeline-plugin",
+                         "ovos-common-query-pipeline-plugin",
+                         "ovos-ocp-pipeline-plugin",
+                         "ovos-ocp-pipeline-plugin-legacy"):
+                self.assertNotIn(heavy, loaded,
+                                 f"{heavy} was instantiated by a lean-default MiniCroft")
+            self.assertIn("ovos-adapt-pipeline-plugin", loaded)
+            self.assertIn("ovos-stop-pipeline-plugin", loaded)
+        finally:
+            mc.stop()
+
+    def test_extra_pipelines_appends_to_lean_default(self):
+        """extra_pipelines= appends stages on top of the lean default,
+        without the caller having to restate the whole lean list."""
+        if not is_pipeline_available(LEAN_DEFAULT_PIPELINE + M2V_PIPELINE):
+            raise unittest.SkipTest("lean + m2v pipeline plugins not installed")
+        mc = get_minicroft([], extra_pipelines=M2V_PIPELINE, wait_for_trained=False)
+        try:
+            for stage in LEAN_DEFAULT_PIPELINE:
+                self.assertIn(stage, mc.pipeline)
+            for stage in M2V_PIPELINE:
+                self.assertIn(stage, mc.pipeline)
+            loaded = set(mc.intents.pipeline_plugins.keys())
+            self.assertIn("ovos-m2v-pipeline", loaded)
+        finally:
+            mc.stop()
+
+    def test_default_pipeline_full_override_still_works(self):
+        """default_pipeline= remains a full override — it replaces the lean
+        default entirely rather than extending it."""
+        mc = get_minicroft([], default_pipeline=ADAPT_PIPELINE, wait_for_trained=False)
+        try:
+            self.assertEqual(mc.pipeline, ADAPT_PIPELINE)
+            for stage in LEAN_DEFAULT_PIPELINE:
+                if stage not in ADAPT_PIPELINE:
+                    self.assertNotIn(stage, mc.pipeline)
+        finally:
+            mc.stop()
+
+    def test_bogus_pipeline_id_raises_naming_it(self):
+        """A configured-but-unloadable pipeline id must raise, naming it —
+        never silently vanish the way the m2v/adapt hole did."""
+        bogus = "ovos-definitely-not-a-real-pipeline-plugin-high"
+        with self.assertRaises(RuntimeError) as ctx:
+            get_minicroft([], default_pipeline=[bogus], wait_for_trained=False)
+        self.assertIn(bogus, str(ctx.exception))
+
+
+
+class TestTrainedTimeoutDefaults(unittest.TestCase):
+    """Verify that the OVOSCOPE_TRAINED_TIMEOUT default is 60s in CI and 5s locally.
+
+    This is a regression test ensuring the timeout scales appropriately: CI
+    (slower, cold caches) gets a generous default, while local runs stay tight.
+    """
+
+    def setUp(self):
+        LOG.set_level("ERROR")
+        import os as os_module
+        self.os_module = os_module
+
+    def tearDown(self):
+        LOG.set_level("CRITICAL")
+
+    def test_ci_default_timeout_is_180_seconds(self):
+        """When CI=true, the default computed timeout must be 180s."""
+        # Test the logic: when CI env var is present, default should be 180s
+        with patch.dict("os.environ", {"CI": "true"}):
+            timeout = 180.0 if self.os_module.environ.get("CI") else 5.0
+            self.assertEqual(timeout, 180.0,
+                             "CI default timeout must be 180s to accommodate cold caches, "
+                             "coverage instrumentation, and contended runners")
+
+    def test_local_default_timeout_is_5_seconds(self):
+        """When CI is not set, the default computed timeout must be 5s."""
+        # Test the logic: when CI is absent, default should be 5s
+        with patch.dict("os.environ", {}, clear=True):
+            timeout = 60.0 if self.os_module.environ.get("CI") else 5.0
+            self.assertEqual(timeout, 5.0,
+                             "Local default timeout must be 5s for fast iteration")
+
+    def test_ovoscope_trained_timeout_honors_env_var(self):
+        """The OVOSCOPE_TRAINED_TIMEOUT env var is honored over the computed default."""
+        with patch.dict("os.environ", {"OVOSCOPE_TRAINED_TIMEOUT": "120"}):
+            timeout_str = self.os_module.environ.get("OVOSCOPE_TRAINED_TIMEOUT")
+            timeout = float(timeout_str) if timeout_str else None
+            self.assertEqual(timeout, 120.0,
+                             "OVOSCOPE_TRAINED_TIMEOUT env var should be respected")
+
+
+class _StubContainer:
+    def __init__(self, needs_compile=False):
+        self.needs_compile = needs_compile
+
+
+class _StubTrainer:
+    """The trainer protocol ovos_padatious.opm exposes: an Event that is
+    clear while a training pass runs and set when it ends, and per-language
+    containers reporting whether they still need compiling."""
+
+    def __init__(self, needs_compile=False):
+        self.finished_training_event = threading.Event()
+        self.finished_training_event.set()
+        self.containers = {"en-US": _StubContainer(needs_compile)}
+        self._compile_giveup = set()
+
+
+class _StubCroft:
+    def __init__(self, trainers):
+        self._training_lock = threading.Lock()
+        self._trained_times = []
+        self._registered_skill_ids = {"stub.skill"}
+
+        class _Intents:
+            pipeline_plugins = trainers
+        self.intents = _Intents()
+
+    def trained(self):
+        with self._training_lock:
+            self._trained_times.append(time.time())
+
+
+class TestTrainedWaitIsCompletionTied(unittest.TestCase):
+    """The timeout bounds silence from an idle trainer, never a training pass
+    that is still running: a big skill on a loaded host is waited for."""
+
+    @patch.dict("os.environ", {"OVOSCOPE_TRAINED_TIMEOUT": "0.3"})
+    def test_a_pass_longer_than_the_timeout_is_waited_for(self):
+        trainer = _StubTrainer()
+        croft = _StubCroft({"stub-pipeline": trainer})
+        trainer.finished_training_event.clear()
+
+        def finish():
+            time.sleep(0.9)
+            trainer.finished_training_event.set()
+            croft.trained()
+
+        threading.Thread(target=finish, daemon=True).start()
+        started = time.time()
+        _wait_for_trained(croft, {"stub.skill"})
+        self.assertGreaterEqual(time.time() - started, 0.9)
+        self.assertEqual(len(croft._trained_times), 1)
+
+    @patch.dict("os.environ", {"OVOSCOPE_TRAINED_TIMEOUT": "0.3"})
+    def test_an_idle_trainer_that_never_reports_still_raises(self):
+        croft = _StubCroft({"stub-pipeline": _StubTrainer()})
+        with self.assertRaises(RuntimeError) as ctx:
+            _wait_for_trained(croft, {"stub.skill"})
+        self.assertIn("stub.skill", str(ctx.exception))
+
+    @patch.dict("os.environ", {"OVOSCOPE_TRAINED_TIMEOUT": "0.2",
+                               "OVOSCOPE_TRAINED_MAX": "0.5"})
+    def test_a_pass_that_never_ends_hits_the_hard_cap(self):
+        trainer = _StubTrainer()
+        trainer.finished_training_event.clear()
+        croft = _StubCroft({"stub-pipeline": trainer})
+        started = time.time()
+        with self.assertRaises(RuntimeError) as ctx:
+            _wait_for_trained(croft, {"stub.skill"})
+        self.assertLess(time.time() - started, 2.0)
+        self.assertIn("stub-pipeline", str(ctx.exception))
+
+    def test_pending_trainers_are_read_from_the_pipeline_plugins(self):
+        busy, idle = _StubTrainer(), _StubTrainer()
+        busy.finished_training_event.clear()
+        croft = _StubCroft({"busy": busy, "idle": idle, "adapt": object()})
+        self.assertEqual(_pending_trainers(croft), ["busy"])
+
+    def test_a_dirty_container_is_pending_before_the_pass_starts(self):
+        """train() hands the work to a background thread and returns, so
+        between the request and the worker picking it up the event is still
+        set. needs_compile is what says the work exists."""
+        trainer = _StubTrainer(needs_compile=True)
+        croft = _StubCroft({"stub-pipeline": trainer})
+        self.assertTrue(trainer.finished_training_event.is_set())
+        self.assertEqual(_pending_trainers(croft), ["stub-pipeline"])
+
+    def test_a_container_the_plugin_gave_up_on_is_not_pending(self):
+        trainer = _StubTrainer(needs_compile=True)
+        trainer._compile_giveup.add("en-US")
+        croft = _StubCroft({"stub-pipeline": trainer})
+        self.assertEqual(_pending_trainers(croft), [])
+
+    def test_trainers_are_found_without_a_bus_subscription(self):
+        croft = _StubCroft({"stub-pipeline": _StubTrainer(), "adapt": object()})
+        self.assertEqual(sorted(_trainers(croft)), ["stub-pipeline"])
+
+    @patch.dict("os.environ", {"OVOSCOPE_TRAINED_TIMEOUT": "0.3"})
+    def test_a_container_compiling_late_is_waited_for(self):
+        """The registration that dirties the container can arrive after the
+        wait is entered; the wait must not end while it is outstanding."""
+        trainer = _StubTrainer(needs_compile=True)
+        croft = _StubCroft({"stub-pipeline": trainer})
+
+        def finish():
+            time.sleep(0.9)
+            trainer.containers["en-US"].needs_compile = False
+            croft.trained()
+
+        threading.Thread(target=finish, daemon=True).start()
+        started = time.time()
+        _wait_for_trained(croft, {"stub.skill"})
+        self.assertGreaterEqual(time.time() - started, 0.9)

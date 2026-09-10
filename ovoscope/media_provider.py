@@ -46,10 +46,12 @@ Usage::
 """
 from __future__ import annotations
 
+import concurrent.futures
 from importlib.metadata import entry_points
-from typing import Any, List, Optional
+from typing import Any, Callable, List, Optional
 
 DEFAULT_GROUP = "opm.media.provider"
+DEFAULT_CALL_TIMEOUT = 30.0
 
 
 class MediaProviderHarness:
@@ -63,11 +65,40 @@ class MediaProviderHarness:
 
     def __init__(self, provider: Any, api: Any = None,
                  entrypoint_name: Optional[str] = None,
-                 entrypoint_group: str = DEFAULT_GROUP) -> None:
+                 entrypoint_group: str = DEFAULT_GROUP,
+                 call_timeout: Optional[float] = DEFAULT_CALL_TIMEOUT) -> None:
         self.provider = provider
         self.api = api
         self.entrypoint_name = entrypoint_name
         self.entrypoint_group = entrypoint_group
+        # A real provider talks to the network. Without a deadline a hung
+        # server (no socket timeout of its own) blocks the test run forever
+        # instead of failing it. Set to None to wait indefinitely.
+        self.call_timeout = call_timeout
+
+    def _call(self, func: Callable, *args, **kwargs) -> Any:
+        """Run a provider call under :attr:`call_timeout`.
+
+        Raises:
+            TimeoutError: when the provider does not answer in time.
+        """
+        if self.call_timeout is None:
+            return func(*args, **kwargs)
+        # NOT a `with` block: ThreadPoolExecutor.__exit__ shuts down with
+        # wait=True, which would block on the very call that timed out.
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        try:
+            future = pool.submit(func, *args, **kwargs)
+            try:
+                return future.result(timeout=self.call_timeout)
+            except concurrent.futures.TimeoutError:
+                raise TimeoutError(
+                    f"provider {type(self.provider).__name__}."
+                    f"{getattr(func, '__name__', func)}() did not answer "
+                    f"within {self.call_timeout}s"
+                ) from None
+        finally:
+            pool.shutdown(wait=False)
 
     # ------------------------------------------------------------------
     # Constructors
@@ -75,7 +106,9 @@ class MediaProviderHarness:
 
     @classmethod
     def from_class(cls, provider_cls: Any, config: Optional[dict] = None,
-                   mock_api: Any = None, api_attr: str = "_api") -> "MediaProviderHarness":
+                   mock_api: Any = None, api_attr: str = "_api",
+                   call_timeout: Optional[float] = DEFAULT_CALL_TIMEOUT
+                   ) -> "MediaProviderHarness":
         """Instantiate ``provider_cls(config)`` and (optionally) inject ``mock_api``.
 
         Args:
@@ -91,12 +124,14 @@ class MediaProviderHarness:
         provider = provider_cls(config or {})
         if mock_api is not None:
             setattr(provider, api_attr, mock_api)
-        return cls(provider, api=mock_api)
+        return cls(provider, api=mock_api, call_timeout=call_timeout)
 
     @classmethod
     def from_entrypoint(cls, name: str, config: Optional[dict] = None,
                         group: str = DEFAULT_GROUP, mock_api: Any = None,
-                        api_attr: str = "_api") -> "MediaProviderHarness":
+                        api_attr: str = "_api",
+                        call_timeout: Optional[float] = DEFAULT_CALL_TIMEOUT
+                        ) -> "MediaProviderHarness":
         """Discover the provider through its installed entry-point and wrap it.
 
         Resolves ``name`` in the ``group`` entry-point group (default
@@ -117,7 +152,8 @@ class MediaProviderHarness:
             )
         provider_cls = matches[0].load()
         harness = cls.from_class(provider_cls, config=config,
-                                 mock_api=mock_api, api_attr=api_attr)
+                                 mock_api=mock_api, api_attr=api_attr,
+                                 call_timeout=call_timeout)
         harness.entrypoint_name = name
         harness.entrypoint_group = group
         return harness
@@ -128,24 +164,25 @@ class MediaProviderHarness:
 
     def is_available(self) -> bool:
         """Provider self-check (server reachable / keys present)."""
-        return self.provider.is_available()
+        return self._call(self.provider.is_available)
 
     def serves(self, signals: Any, context: Any = None) -> bool:
         """Context-aware routing gate (three-axis ``matches`` + device/policy)."""
-        return self.provider.serves(signals, context)
+        return self._call(self.provider.serves, signals, context)
 
     def search(self, signals: Any, lang: str = "en-us") -> List[Any]:
         """Raw search — may raise, mirroring a direct provider call."""
-        return self.provider.search(signals, lang=lang)
+        return self._call(self.provider.search, signals, lang=lang)
 
     def search_safe(self, signals: Any, context: Any = None,
                     lang: str = "en-us") -> List[Any]:
         """The never-raising entry the pipeline's thread-pool dispatch calls."""
-        return self.provider.search_safe(signals, context=context, lang=lang)
+        return self._call(self.provider.search_safe, signals,
+                          context=context, lang=lang)
 
     def featured_media(self, lang: str = "en-us") -> List[Any]:
         """Curated/home content (recently-played, recommendations, …)."""
-        return self.provider.featured_media(lang=lang)
+        return self._call(self.provider.featured_media, lang=lang)
 
     # ------------------------------------------------------------------
     # Assertions

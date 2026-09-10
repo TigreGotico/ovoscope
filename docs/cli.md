@@ -1,6 +1,6 @@
 # ovoscope CLI
 
-The `ovoscope` command-line tool provides five subcommands for recording,
+The `ovoscope` command-line tool provides six subcommands for recording,
 replaying, diffing, validating, and scanning E2E test fixtures.
 
 ## Installation
@@ -16,10 +16,10 @@ ovoscope --help
 
 ## Subcommands
 
-### `ovoscope record` — Record a fixture
+### `ovoscope record`: Record a fixture
 
 **In-process recording** (default): loads the skill(s) inside the current
-process using `MiniCroft` — `cli.py:cmd_record`.
+process using `MiniCroft` (`cli.py:cmd_record`).
 
 ```bash
 ovoscope record \
@@ -30,7 +30,7 @@ ovoscope record \
     --timeout 20
 ```
 
-**Live recording** from a running OVOS instance (`RemoteRecorder` —
+**Live recording** from a running OVOS instance (`RemoteRecorder`, in
 `remote_recorder.py:RemoteRecorder.record`):
 
 ```bash
@@ -43,7 +43,7 @@ ovoscope record --live \
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--skill-id` | — | OPM skill IDs to load (repeatable). |
+| `--skill-id` | none | OPM skill IDs to load (repeatable). |
 | `--utterance` | **required** | User utterance text. |
 | `--output` | **required** | Output fixture JSON path. |
 | `--lang` | `en-US` | Language tag. |
@@ -54,9 +54,9 @@ ovoscope record --live \
 
 ---
 
-### `ovoscope run` — Replay a fixture
+### `ovoscope run`: Replay a fixture
 
-Replays a saved fixture file and exits with code 1 on failure —
+Replays a saved fixture file and exits with code 1 on failure, in
 `cli.py:cmd_run`.
 
 ```bash
@@ -72,10 +72,10 @@ ovoscope run test/fixtures/hello.json --verbose --timeout 30
 
 ---
 
-### `ovoscope diff` — Compare two fixtures
+### `ovoscope diff`: Compare two fixtures
 
-Compares two fixture files and prints a colored report —
-`diff.py:diff_fixtures`, `cli.py:cmd_diff`.
+Compares two fixture files and prints a colored report, in
+`diff.py:diff_fixtures` and `cli.py:cmd_diff`.
 
 ```bash
 ovoscope diff expected.json actual.json
@@ -93,9 +93,9 @@ Exits 0 if identical, 1 if differences are found.
 
 ---
 
-### `ovoscope validate` — Schema-validate fixtures
+### `ovoscope validate`: Schema-validate fixtures
 
-Validates one or more fixture files against the expected schema —
+Validates one or more fixture files against the expected schema, in
 `cli.py:cmd_validate`.
 
 ```bash
@@ -109,10 +109,10 @@ is a list) when the `pydantic` extra is not installed.
 
 ---
 
-### `ovoscope coverage` — Ecosystem coverage scan
+### `ovoscope coverage`: Ecosystem coverage scan
 
-Scans a workspace root for OVOS plugin repos and reports E2E test coverage —
-`coverage.py:scan_workspace`, `cli.py:cmd_coverage`.
+Scans a workspace root for OVOS plugin repos and reports E2E test coverage, in
+`coverage.py:scan_workspace` and `cli.py:cmd_coverage`.
 
 ```bash
 ovoscope coverage "OpenVoiceOS Workspace/" --format table
@@ -126,9 +126,66 @@ ovoscope coverage "OpenVoiceOS Workspace/" --format json
 
 ---
 
+### `ovoscope bus-coverage` — Bus handler/emitter coverage
+
+Runs every fixture found under a directory (or a single fixture file), and
+reports which bus message types each skill actually listens for and emits,
+merged across all fixtures — `cli.py:cmd_bus_coverage`.
+
+```bash
+ovoscope bus-coverage test/fixtures/
+ovoscope bus-coverage test/fixtures/hello.json --format json
+ovoscope bus-coverage test/fixtures/ --skill-id ovos-skill-hello-world.openvoiceos --verbose
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `test_dir` | **required** | Directory of fixture JSON files, or a single fixture file. |
+| `--skill-id` | None | Only report on fixtures that include this skill_id. |
+| `--format` | `table` | Output format: `table` or `json`. |
+| `--verbose` / `-v` | False | Print per-message-type detail rows. |
+
+Fixtures that fail to load or time out booting `MiniCroft` are skipped and
+counted; the run still reports coverage for the fixtures that succeeded.
+
+---
+
+## `ovoscope-setup` — Install the skill into AI coding assistants
+
+`ovoscope-setup` is a separate console script (`setup_skill.py`) that installs
+the ovoscope Claude Code / Gemini CLI skill — `SKILL.md`, docs, and `FAQ.md` —
+downloaded from GitHub at install time.
+
+```bash
+ovoscope-setup                     # auto-detect and install all
+ovoscope-setup --claude            # Claude Code only
+ovoscope-setup --gemini            # Gemini CLI only (project-level)
+ovoscope-setup --gemini --path /my/workspace
+ovoscope-setup --list              # show detected tools without installing
+ovoscope-setup --no-docs           # skip docs download (offline / CI)
+ovoscope-setup --uninstall --claude
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--claude` | False | Install for Claude Code (`~/.claude/skills/ovoscope/`). |
+| `--gemini` | False | Install for Gemini CLI (`<path>/.gemini/skills/ovoscope/`). Project-level. |
+| `--path` | current directory | Project root for the Gemini install. |
+| `--list` | False | Show which tools are detected on `PATH` without installing anything. |
+| `--no-docs` | False | Skip downloading documentation from GitHub (offline / CI). |
+| `--uninstall` | False | Remove the skill instead of installing it. |
+
+With no explicit `--claude`/`--gemini` flag, the tool auto-detects which of
+`claude`/`gemini` are on `PATH` and installs for those.
+
+---
+
 ## Exit Codes
 
 | Code | Meaning |
 |------|---------|
 | 0 | Success / no differences / all valid |
 | 1 | Failure / differences found / validation error |
+
+---
+[← Usage Guide](usage-guide.md) · [Home](../README.md) · [CI Integration →](ci-integration.md)

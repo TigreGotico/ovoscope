@@ -2,9 +2,11 @@
 boot sequence, final session, GUI filtering, from_message recording,
 serialization edge cases, and anonymize_message."""
 import json
+import logging
 import os
 import tempfile
 import unittest
+import warnings
 
 from ovos_bus_client.message import Message
 from ovos_bus_client.session import Session, SessionManager
@@ -391,22 +393,55 @@ class TestSerializationExtended(unittest.TestCase):
         self.assertFalse(data["test_routing"])
 
     def test_anonymize_message_replaces_location(self):
-        """anonymize_message() sets location to N/A."""
+        """anonymize_message() sets location with OVOS-SESSION-1 spec shape."""
         sess = _session()
-        sess.location_preferences = {
-            "city": {"name": "Lisbon", "code": "LIS",
-                     "state": {"code": "PT", "name": "Portugal",
-                               "country": {"code": "PT", "name": "Portugal"}}},
-            "coordinate": {"latitude": 38.7, "longitude": -9.1},
-            "timezone": {"code": "Europe/Lisbon", "name": "Europe/Lisbon"},
+        sess.location = {
+            "lat": 38.7,
+            "lon": -9.1,
+            "tz": "Europe/Lisbon"
         }
         src = Message("test", {},
                       {"session": sess.serialize(), "source": "A", "destination": "B"})
         anon = End2EndTest.anonymize_message(src)
         sess_data = anon.context.get("session", {})
         loc = sess_data.get("location", {})
-        self.assertEqual(loc["city"]["name"], "N/A")
-        self.assertEqual(loc["coordinate"]["latitude"], 0)
+        # Check that location is the three-key spec shape (OVOS-SESSION-1 §3.5)
+        self.assertEqual(loc["lat"], 0.0)
+        self.assertEqual(loc["lon"], 0.0)
+        self.assertEqual(loc["tz"], "Europe/Lisbon")
+
+    def test_anonymize_message_uses_spec_location_not_deprecated_api(self):
+        """anonymize_message() uses spec-compliant Session.location, not deprecated location_preferences.
+
+        Session.location_preferences is deprecated at ovos-bus-client 2.11.3a1+
+        (removed at 3.0.0). anonymize_message() must use Session.location directly
+        with the OVOS-SESSION-1 §3.5 spec shape {lat, lon, tz} to avoid triggering
+        deprecation warnings from the ovos-bus-client logger.
+
+        Regression: accessing location_preferences logs two deprecation warnings
+        per call. The fix switches to direct location access.
+        """
+        sess = _session()
+        sess.location = {
+            "lat": 38.7,
+            "lon": -9.1,
+            "tz": "Europe/Lisbon"
+        }
+        src = Message("test", {},
+                      {"session": sess.serialize(), "source": "A", "destination": "B"})
+        # Call anonymize_message (must not raise, should produce spec-compliant output)
+        anon = End2EndTest.anonymize_message(src)
+        # Verify the output is spec-compliant (three-key location format)
+        sess_data = anon.context.get("session", {})
+        loc = sess_data.get("location", {})
+        # Spec-compliant format per OVOS-SESSION-1 §3.5
+        self.assertIn("lat", loc, "location must have 'lat' key (spec-compliant)")
+        self.assertIn("lon", loc, "location must have 'lon' key (spec-compliant)")
+        self.assertIn("tz", loc, "location must have 'tz' key (spec-compliant)")
+        # Anonymized values
+        self.assertEqual(loc["lat"], 0.0, "anonymized latitude must be 0.0")
+        self.assertEqual(loc["lon"], 0.0, "anonymized longitude must be 0.0")
+        self.assertEqual(loc["tz"], "Europe/Lisbon", "anonymized tz must be preserved")
 
 
 # ---------------------------------------------------------------------------
@@ -562,7 +597,7 @@ class TestMiniCroftLangConfig(unittest.TestCase):
         """MiniCroft lang parameter overrides session lang."""
         mc = get_minicroft([], lang="pt-BR")
         try:
-            self.assertEqual(SessionManager.default_session.lang, "pt-BR")
+            self.assertEqual(SessionManager.get_default_session().lang, "pt-BR")
         finally:
             mc.stop()
 
@@ -580,13 +615,17 @@ class TestMiniCroftLangConfig(unittest.TestCase):
 # CaptureSession __del__
 # ---------------------------------------------------------------------------
 class TestCaptureSessionDel(unittest.TestCase):
+    """__del__ touches only ``minicroft.bus`` — a stub is enough (and a real
+    MiniCroft boot here retained hundreds of MB per run)."""
 
     def setUp(self):
+        from types import SimpleNamespace
+        from ovos_utils.fakebus import FakeBus
         LOG.set_level("ERROR")
-        self.mc = get_minicroft([])
+        self.mc = SimpleNamespace(bus=FakeBus())
 
     def tearDown(self):
-        self.mc.stop()
+        self.mc.bus.close()
         LOG.set_level("CRITICAL")
 
     def test_del_calls_finish(self):
@@ -620,7 +659,7 @@ class TestVerboseOutput(unittest.TestCase):
             source_message=src,
             expected_messages=[
                 src,
-                Message("speak", {"utterance": "verbose"}),
+                Message("ovos.utterance.speak", {"utterance": "verbose"}),
                 Message("ovos.utterance.handled", {}),
             ],
             ignore_messages=DEFAULT_IGNORED + HANDLER_LIFECYCLE,

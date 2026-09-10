@@ -22,14 +22,14 @@ captures the emitted bus sequence.  The mocks live in
 Every harness inherits these (each takes an optional message list, defaulting to
 the last feed result, and returns the checked list):
 
-- `assert_record_begin_emitted()` — `recognizer_loop:record_begin` present.
-- `assert_wakeword_detected()` — both `recognizer_loop:wakeword` and `…:record_begin`.
-- `assert_wakeword_suppressed()` — neither wake-word nor record-begin present.
-- `assert_utterance_emitted(utterance=None)` — a `recognizer_loop:utterance` (optionally with the given text).
+- `assert_record_begin_emitted()` (`recognizer_loop:record_begin`) present.
+- `assert_wakeword_detected()`: both `recognizer_loop:wakeword` and `…:record_begin`.
+- `assert_wakeword_suppressed()`: neither wake-word nor record-begin present.
+- `assert_utterance_emitted(utterance=None)`: a `recognizer_loop:utterance` (optionally with the given text).
 
 ---
 
-## ovos-dinkum-listener — `MiniVoiceLoop`
+## ovos-dinkum-listener: `MiniVoiceLoop`
 
 ### Wake-word / verifier gate (`feed_chunks`)
 
@@ -62,14 +62,14 @@ with loop([boom]) as vl:                       # fail-open
 | Sequence | Expected bus events |
 |---|---|
 | WW detected + all verifiers accept | `recognizer_loop:wakeword` + `…:record_begin` |
-| WW detected + a verifier rejects | suppressed — no `recognizer_loop:*` |
+| WW detected + a verifier rejects | suppressed: no `recognizer_loop:*` |
 | WW detected + a verifier raises (fail-open) | `…:record_begin` emitted |
 | No WW detected | no `recognizer_loop:*` |
 
 The verifier gate lives inside `DinkumVoiceLoop._detect_ww` and is only present
 in ovos-dinkum-listener builds that ship the hotword-verifier feature
 (`HotwordContainer.verify`).  On a build without it the gate is absent and a
-detection is never suppressed — assert accordingly for the version under test.
+detection is never suppressed: assert accordingly for the version under test.
 
 ### Full loop from an audio file (`feed_file`)
 
@@ -95,7 +95,7 @@ ovos-dinkum-listener is not installed.
 
 ---
 
-## ovos-simple-listener — `MiniSimpleListener`
+## ovos-simple-listener: `MiniSimpleListener`
 
 Drives the real `SimpleListener` thread with the canonical bus callbacks (a
 per-instance mirror of `OVOSCallbacks`).
@@ -119,7 +119,7 @@ mimic production. Raises `RuntimeError` when ovos-simple-listener is absent.
 
 ---
 
-## mycroft-classic-listener — `MiniClassicListener`
+## mycroft-classic-listener: `MiniClassicListener`
 
 The classic listener is a threaded, energy-based pipeline. Two entry points:
 
@@ -163,10 +163,10 @@ absent.
 
 ---
 
-## Declarative helper — `VoiceLoopTest`
+## Declarative helper: `VoiceLoopTest`
 
-For the dinkum backend, `VoiceLoopTest` runs a scenario and asserts in one call —
-via `feed_chunks` by default, or `feed_file` when `audio_file` is set:
+For the dinkum backend, `VoiceLoopTest` runs a scenario and asserts in one call,
+using `feed_chunks` by default, or `feed_file` when `audio_file` is set:
 
 ```python
 from unittest.mock import Mock
@@ -201,3 +201,6 @@ VoiceLoopTest(
 | `bridge_recognizer_loop_to_bus` / `classic_listener_available` | Classic event-bridge + capability probe. |
 | `MockFileMicrophone`, `MockStreamingSTT`, `MockVADEngine`, `MockHotWordEngine` | Mock plugins shared across backends. |
 | `VoiceLoopTest` | Declarative dinkum scenario runner. |
+
+---
+[← Listener](listener.md) · [Home](../README.md) · [GUI Testing →](gui-testing.md)

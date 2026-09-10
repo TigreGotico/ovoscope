@@ -37,17 +37,34 @@ pytest test/end2end/ -v --timeout=60
 
 ```python
 from ovoscope import End2EndTest, get_minicroft
+from ovos_bus_client.message import Message
+from ovos_bus_client.session import Session
+
+SKILL_ID = "skill-id.author"
 
 # Start MiniCroft with your skill
-minicroft = get_minicroft(["skill-id.author"])
+minicroft = get_minicroft([SKILL_ID])
 
-# Define and run a test
-test = End2EndTest(
-    utterance="hello world",
-    skill_id="skill-id.author",
-    expected_messages=["speak"],
+session = Session("test-session")
+utterance = Message(
+    "recognizer_loop:utterance",
+    {"utterances": ["hello world"], "lang": "en-US"},
+    {"session": session.serialize(), "source": "A", "destination": "B"},
 )
-test.execute(minicroft)
+
+# Define and run a test. expected_messages must be Message instances (not
+# bare topic strings) — use the canonical ovos.* spec topic (OVOS-PIPELINE-1)
+# for the speak response.
+test = End2EndTest(
+    minicroft=minicroft,
+    skill_ids=[SKILL_ID],
+    source_message=utterance,
+    expected_messages=[
+        utterance,
+        Message("ovos.utterance.speak", {"utterance": "hello"}),
+    ],
+)
+test.execute()
 ```
 
 ### Record a Fixture (CLI)

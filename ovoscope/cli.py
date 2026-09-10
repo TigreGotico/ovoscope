@@ -20,6 +20,7 @@ Provides the ``ovoscope`` command with the following subcommands:
 * ``diff``       — Compare two fixture files with colored output.
 * ``validate``   — Schema-validate one or more fixture files.
 * ``coverage``   — Scan a workspace root and report E2E test coverage.
+* ``bus-coverage`` — Run fixtures and report bus handler/emitter coverage.
 
 Usage::
 
@@ -29,6 +30,7 @@ Usage::
     ovoscope diff expected.json actual.json
     ovoscope validate fixture.json
     ovoscope coverage path/to/OpenVoiceOS/
+    ovoscope bus-coverage test/fixtures/
 """
 from __future__ import annotations
 
@@ -184,6 +186,12 @@ def cmd_run(args: argparse.Namespace) -> int:
         _die("MiniCroft did not reach READY state in time.")
 
     try:
+        # Hand the already-booted MiniCroft to the test. Without this,
+        # execute() boots a SECOND managed MiniCroft and both patch the same
+        # process-wide globals. `managed = False` keeps ownership here — the
+        # finally block below stops it.
+        test.minicroft = mc
+        test.managed = False
         test.execute(timeout=timeout)
         print("[run] PASS")
         return 0
@@ -211,11 +219,14 @@ def cmd_diff(args: argparse.Namespace) -> int:
     except ImportError as exc:
         _die(f"ovoscope.diff import failed: {exc}")
 
-    result = diff_fixtures(
-        expected_path=args.expected,
-        actual_path=args.actual,
-        ignore_context=not args.include_context,
-    )
+    try:
+        result = diff_fixtures(
+            expected_path=args.expected,
+            actual_path=args.actual,
+            ignore_context=not args.include_context,
+        )
+    except (OSError, ValueError) as exc:
+        _die(f"Could not diff fixtures: {exc}")
     result.print_report(color=not args.no_color)
     return 0 if result.is_identical else 1
 
@@ -223,7 +234,10 @@ def cmd_diff(args: argparse.Namespace) -> int:
 def cmd_validate(args: argparse.Namespace) -> int:
     """Schema-validate one or more fixture JSON files.
 
-    Runs basic structural validation on every fixture file.
+    Uses :func:`ovoscope.pydantic_helpers.validate_fixture` (per-message
+    schema validation against ``OpenVoiceOSMessage``) when the ``pydantic``
+    extra is installed, falling back to basic JSON structure validation
+    (required top-level keys, ``expected_messages`` is a list) otherwise.
 
     Args:
         args: Parsed CLI arguments with fixtures (list of paths).
@@ -231,10 +245,21 @@ def cmd_validate(args: argparse.Namespace) -> int:
     Returns:
         Exit code (0 = all valid, 1 = validation failure).
     """
+    try:
+        from ovoscope.pydantic_helpers import _PYDANTIC_AVAILABLE, validate_fixture
+    except ImportError:
+        _PYDANTIC_AVAILABLE = False
+        validate_fixture = None
+
     all_ok = True
     for path in args.fixtures:
         try:
+            # Structural checks always run — pydantic validation is a
+            # per-message layer on top, not a replacement (validate_fixture
+            # skips sections that are absent entirely).
             _basic_validate(path)
+            if _PYDANTIC_AVAILABLE:
+                validate_fixture(path)
             print(f"[validate] OK  {path}")
         except Exception as exc:
             print(f"[validate] FAIL  {path}: {exc}")

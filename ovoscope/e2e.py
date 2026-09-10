@@ -26,7 +26,32 @@ from typing import Any, ClassVar, Dict, List, Optional
 from ovos_bus_client.message import Message
 from ovos_bus_client.session import Session
 from ovos_config.config import Configuration
+from ovos_utils.log import LOG
 
+from ovoscope.version import VERSION_MAJOR, VERSION_MINOR
+
+
+def _stamp_skill_id(msg: Message, skill_id: Optional[str]) -> None:
+    """Stamp the registration's provenance when the caller gave one."""
+    if skill_id is not None:
+        msg.context["skill_id"] = skill_id
+
+
+def _warn_unattributed(helper: str, msg_type: str) -> None:
+    """Say once why a registration carries no skill attribution.
+
+    Without ``skill_id`` in its context a registration cannot be attributed
+    to a skill, so a pipeline plugin cannot deregister it by skill and a
+    conformance suite cannot tell one caller's intents from another's. The
+    argument is required in every new call; a caller that omits it gets the
+    unattributed message it asked for, and one warning saying so.
+    """
+    LOG.warning(
+        f"ovoscope.e2e.{helper}() was called without skill_id, so "
+        f"'{msg_type}' carries no skill attribution and cannot be "
+        f"deregistered by skill. Pass skill_id=; the argument becomes "
+        f"required in {VERSION_MAJOR}.{VERSION_MINOR + 1}.0."
+    )
 
 # ---------------------------------------------------------------------------
 # Standalone bus helpers (work with any FakeBus / MessageBusClient)
@@ -73,20 +98,33 @@ def wait_for_match(
     expected_types: List[str],
     *,
     timeout: float = 5.0,
+    emit: Optional[Message] = None,
 ) -> Optional[Message]:
     """Subscribe to ``expected_types`` and ``complete_intent_failure``; return
     the first match Message, or ``None`` on failure / timeout.
 
-    The caller is responsible for emitting the utterance *after* calling this
-    helper if used in a pytest style — for the ``unittest`` style use
-    :meth:`E2EPipelineHarness.send_and_capture` which emits internally.
+    This helper BLOCKS, so a single-threaded caller cannot emit the utterance
+    after calling it. Pass the message as *emit* instead: it is emitted after
+    the handlers are subscribed, so no reply can be missed. Emit it yourself
+    beforehand only when the reply is guaranteed to be asynchronous.
+
+    Args:
+        bus: The bus to subscribe on.
+        expected_types: Message types that count as a match.
+        timeout: Seconds to wait for a verdict.
+        emit: Message emitted once the handlers are in place.
+
+    Returns:
+        The first matching :class:`Message`, or ``None``.
     """
     got: List[Message] = []
+    lock = threading.Lock()
     done = threading.Event()
     failed = threading.Event()
 
     def _on_match(msg: Message) -> None:
-        got.append(msg)
+        with lock:
+            got.append(msg)
         done.set()
 
     def _on_fail(_msg: Message) -> None:
@@ -97,14 +135,31 @@ def wait_for_match(
         bus.on(t, _on_match)
     bus.on("complete_intent_failure", _on_fail)
     try:
+        if emit is not None:
+            bus.emit(emit)
         done.wait(timeout=timeout)
     finally:
         for t in expected_types:
             bus.remove(t, _on_match)
         bus.remove("complete_intent_failure", _on_fail)
-    if failed.is_set() and not got:
+    return _first_match(got, failed, lock)
+
+
+def _first_match(got: List[Message], failed: threading.Event,
+                 lock: threading.Lock) -> Optional[Message]:
+    """Return the first captured match, tolerating a match/fail race.
+
+    ``failed`` can be observed set while a concurrent ``got.append`` is still
+    in flight, which used to drop a real match. Take the lock (the appender
+    holds it) and re-read once before giving up.
+    """
+    with lock:
+        if got:
+            return got[0]
+    if failed.is_set():
         return None
-    return got[0] if got else None
+    with lock:
+        return got[0] if got else None
 
 
 def wait_for_failure(bus, *, timeout: float = 2.0) -> bool:
@@ -131,41 +186,55 @@ def wait_for_failure(bus, *, timeout: float = 2.0) -> bool:
 # Adapt family (adapt, palavreado, …) — registers vocab + IntentBuilder.
 
 def register_padatious_intent(
-    bus, name: str, samples: List[str], *, lang: str = "en-US",
+    bus, name: str, samples: List[str], *, skill_id: Optional[str] = None,
+    lang: str = "en-US",
     settle: float = 0.1,
 ) -> None:
-    bus.emit(Message("padatious:register_intent", {
+    msg = Message("padatious:register_intent", {
         "name": name, "samples": samples, "lang": lang,
-    }))
+    })
+    _stamp_skill_id(msg, skill_id)
+    if skill_id is None:
+        _warn_unattributed("register_padatious_intent", msg.msg_type)
+    bus.emit(msg)
     if settle:
         time.sleep(settle)
 
 
 def register_padatious_entity(
-    bus, name: str, samples: List[str], *, lang: str = "en-US",
+    bus, name: str, samples: List[str], *, skill_id: Optional[str] = None,
+    lang: str = "en-US",
     settle: float = 0.1,
 ) -> None:
-    bus.emit(Message("padatious:register_entity", {
+    msg = Message("padatious:register_entity", {
         "name": name, "samples": samples, "lang": lang,
-    }))
+    })
+    _stamp_skill_id(msg, skill_id)
+    if skill_id is None:
+        _warn_unattributed("register_padatious_entity", msg.msg_type)
+    bus.emit(msg)
     if settle:
         time.sleep(settle)
 
 
 def register_adapt_vocab(
-    bus, entity_type: str, words: List[str], *, lang: str = "en-US",
-    settle: float = 0.1,
+    bus, entity_type: str, words: List[str], *, skill_id: Optional[str] = None,
+    lang: str = "en-US", settle: float = 0.1,
 ) -> None:
+    if skill_id is None:
+        _warn_unattributed("register_adapt_vocab", "register_vocab")
     for word in words:
-        bus.emit(Message("register_vocab", {
+        msg = Message("register_vocab", {
             "entity_value": word, "entity_type": entity_type, "lang": lang,
-        }))
+        })
+        _stamp_skill_id(msg, skill_id)
+        bus.emit(msg)
     if settle:
         time.sleep(settle)
 
 
-def register_adapt_intent(bus, builder, *, lang: str = "en-US",
-                          settle: float = 0.1) -> None:
+def register_adapt_intent(bus, builder, *, skill_id: Optional[str] = None,
+                          lang: str = "en-US", settle: float = 0.1) -> None:
     """Register an Adapt intent.
 
     ``builder`` may be an ``IntentBuilder`` (will be ``.build()``-ed) or an
@@ -174,19 +243,29 @@ def register_adapt_intent(bus, builder, *, lang: str = "en-US",
     intent = builder.build() if hasattr(builder, "build") else builder
     msg = Message("register_intent", intent.__dict__)
     msg.context["lang"] = lang
+    _stamp_skill_id(msg, skill_id)
+    if skill_id is None:
+        _warn_unattributed("register_adapt_intent", msg.msg_type)
     bus.emit(msg)
     if settle:
         time.sleep(settle)
 
 
-def detach_intent(bus, intent_name: str, *, settle: float = 0.1) -> None:
-    bus.emit(Message("detach_intent", {"intent_name": intent_name}))
+def detach_intent(bus, intent_name: str, *, skill_id: Optional[str] = None,
+                  settle: float = 0.1) -> None:
+    msg = Message("detach_intent", {"intent_name": intent_name})
+    _stamp_skill_id(msg, skill_id)
+    if skill_id is None:
+        _warn_unattributed("detach_intent", msg.msg_type)
+    bus.emit(msg)
     if settle:
         time.sleep(settle)
 
 
 def detach_skill(bus, skill_id: str, *, settle: float = 0.1) -> None:
-    bus.emit(Message("detach_skill", {"skill_id": skill_id}))
+    msg = Message("detach_skill", {"skill_id": skill_id})
+    msg.context["skill_id"] = skill_id
+    bus.emit(msg)
     if settle:
         time.sleep(settle)
 
@@ -301,31 +380,12 @@ class E2EPipelineHarness(unittest.TestCase):
         session: Optional[Session] = None,
     ) -> Optional[Message]:
         """Emit ``utterance`` and return the first match Message (or None)."""
-        got: List[Message] = []
-        done = threading.Event()
-        failed = threading.Event()
-
-        def _on_match(msg: Message) -> None:
-            got.append(msg)
-            done.set()
-
-        def _on_fail(_msg: Message) -> None:
-            failed.set()
-            done.set()
-
-        for t in expected_types:
-            self.bus.on(t, _on_match)
-        self.bus.on("complete_intent_failure", _on_fail)
-        try:
-            self.bus.emit(self.make_utterance(utterance, session=session))
-            done.wait(timeout=timeout)
-        finally:
-            for t in expected_types:
-                self.bus.remove(t, _on_match)
-            self.bus.remove("complete_intent_failure", _on_fail)
-        if failed.is_set() and not got:
-            return None
-        return got[0] if got else None
+        return wait_for_match(
+            self.bus,
+            expected_types,
+            timeout=timeout,
+            emit=self.make_utterance(utterance, session=session),
+        )
 
     def expect_no_match(
         self,

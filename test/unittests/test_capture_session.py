@@ -1,24 +1,35 @@
-"""Unit tests for CaptureSession."""
+"""Unit tests for CaptureSession.
+
+CaptureSession only ever touches ``minicroft.bus``, so these tests drive a
+``SimpleNamespace(bus=FakeBus())`` stub instead of booting a real MiniCroft.
+A boot costs seconds and hundreds of MB of retained memory per test class,
+and buys nothing here.
+
+Race-condition coverage for the same class lives in
+``test_audit_round1.py::TestCaptureSessionRaces`` and
+``test_audit_round2.py::TestCaptureSessionArming``.
+"""
 import threading
+import time
 import unittest
+from types import SimpleNamespace
 
 from ovos_bus_client.message import Message
-from ovos_bus_client.session import Session
+from ovos_utils.fakebus import FakeBus
 from ovos_utils.log import LOG
 
-from ovoscope import CaptureSession, get_minicroft
+from ovoscope import CaptureSession
 
 
 class TestCaptureSession(unittest.TestCase):
-    """CaptureSession is tested by emitting directly on MiniCroft's FakeBus."""
+    """CaptureSession is tested by emitting directly on a stub FakeBus."""
 
     def setUp(self):
         LOG.set_level("ERROR")
-        # empty MiniCroft — we drive the bus manually
-        self.mc = get_minicroft([])
+        self.mc = SimpleNamespace(bus=FakeBus())
 
     def tearDown(self):
-        self.mc.stop()
+        self.mc.bus.close()
         LOG.set_level("CRITICAL")
 
     # ------------------------------------------------------------------
@@ -216,6 +227,119 @@ class TestCaptureSession(unittest.TestCase):
         types = [m.msg_type for m in msgs]
         self.assertIn("test.partial", types)
 
+    def test_unmatched_utterance_ends_on_terminal_signal_not_timeout(self):
+        """A caller narrowing eof_msgs to a mid-pipeline topic (e.g. to dodge
+        a get_response() deadlock on a *matched* handler, the exact pattern
+        ovos-skill-alerts' multilang golden suite uses) must still end
+        capture promptly for an UNMATCHED utterance, which never reaches
+        that topic. capture() must fall back to the pipeline's own terminal
+        signal (ovos.utterance.handled) instead of paying the full timeout
+        on every unmatched row.
+        """
+        cs = CaptureSession(self.mc,
+                            eof_msgs=["mycroft.skill.handler.start"],
+                            ignore_messages=[])
+        self._emit_after(0.05, Message("recognizer_loop:utterance"))
+        self._emit_after(0.10, Message("ovos.intent.unmatched"))
+        self._emit_after(0.12, Message("ovos.utterance.handled"))
+        # "mycroft.skill.handler.start" never fires: only the timeout backstop
+        # (5s) would return without the terminal-signal fallback.
+        start = time.monotonic()
+        completed = cs.capture(Message("test.trigger"), timeout=5)
+        elapsed = time.monotonic() - start
+        msgs = cs.finish()
+
+        self.assertTrue(completed, "capture must end on a terminal signal, not time out")
+        self.assertLess(elapsed, 2, "capture must not wait out the full timeout")
+        types = [m.msg_type for m in msgs]
+        # ovos.intent.unmatched fires first but is not a terminal signal —
+        # capture keeps going until ovos.utterance.handled, the single true
+        # end-marker, and includes both in the captured messages.
+        self.assertIn("ovos.intent.unmatched", types)
+        self.assertIn("ovos.utterance.handled", types)
+
+    def test_terminal_signals_can_be_disabled(self):
+        """terminal_signals=False restores the old eof_msgs-only behaviour."""
+        cs = CaptureSession(self.mc,
+                            eof_msgs=["mycroft.skill.handler.start"],
+                            ignore_messages=[],
+                            terminal_signals=False)
+        self._emit_after(0.05, Message("ovos.intent.unmatched"))
+        self._emit_after(0.08, Message("ovos.utterance.handled"))
+        completed = cs.capture(Message("test.trigger"), timeout=0.3)
+        cs.finish()
+        self.assertFalse(completed, "terminal signals must be ignored when disabled")
+
+    def test_terminal_signals_skipped_when_eof_count_above_one(self):
+        """eof_count>1 counts occurrences of ovos.utterance.handled across
+        concurrent lifecycles; the terminal-signal fallback must not
+        short-circuit that count after only one occurrence."""
+        cs = CaptureSession(self.mc,
+                            eof_msgs=["ovos.utterance.handled"],
+                            eof_count=2,
+                            ignore_messages=[])
+        self._emit_after(0.05, Message("ovos.intent.unmatched"))
+        self._emit_after(0.08, Message("ovos.utterance.handled"))
+        # only ONE ovos.utterance.handled fires — eof_count=2 must not be
+        # satisfied early by the terminal-signal fallback.
+        completed = cs.capture(Message("test.trigger"), timeout=0.3)
+        cs.finish()
+        self.assertFalse(completed, "eof_count must not be short-circuited by terminal signals")
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCaptureSessionTrainingNoise(unittest.TestCase):
+    """A 'mycroft.skills.trained' event can legitimately interleave with a
+    capture window (e.g. a pipeline plugin re-training for a secondary
+    lang). It is filtered out via TRAINING_NOISE/DEFAULT_IGNORED so
+    sequence comparisons stay exact on everything else — genuinely missing
+    or duplicated real messages must still be caught, never masked as a
+    subsequence match would."""
+
+    def setUp(self):
+        LOG.set_level("ERROR")
+        self.mc = SimpleNamespace(bus=FakeBus())
+
+    def tearDown(self):
+        self.mc.bus.close()
+        LOG.set_level("CRITICAL")
+
+    def test_trained_event_interleaved_is_filtered_not_counted(self):
+        from ovoscope import CaptureSession, DEFAULT_IGNORED, TRAINING_NOISE
+
+        self.assertIn("mycroft.skills.trained", TRAINING_NOISE)
+        self.assertIn("mycroft.skills.trained", DEFAULT_IGNORED)
+
+        session = CaptureSession(minicroft=self.mc)
+        session._armed = True
+        self.mc.bus.emit(Message("speak", {"utterance": "hi"}))
+        self.mc.bus.emit(Message("mycroft.skills.trained"))
+        self.mc.bus.emit(Message("ovos.utterance.handled"))
+
+        types = [m.msg_type for m in session.responses]
+        self.assertEqual(types, ["speak", "ovos.utterance.handled"],
+                         "'mycroft.skills.trained' must be filtered out of "
+                         "the exact-comparison sequence, not counted as a "
+                         "captured message")
+
+    def test_genuinely_missing_message_still_fails_exact_comparison(self):
+        """Filtering the training-noise topic must not become an excuse to
+        subsequence-match the rest: a real message that never arrives has
+        to still make an exact sequence comparison fail."""
+        from ovoscope import CaptureSession
+
+        session = CaptureSession(minicroft=self.mc)
+        session._armed = True
+
+        expected_types = ["speak", "mycroft.skill.handler.complete", "ovos.utterance.handled"]
+        self.mc.bus.emit(Message("mycroft.skills.trained"))
+        self.mc.bus.emit(Message("speak", {"utterance": "hi"}))
+        # "mycroft.skill.handler.complete" never arrives.
+        self.mc.bus.emit(Message("ovos.utterance.handled"))
+
+        received_types = [m.msg_type for m in session.responses]
+        self.assertNotEqual(received_types, expected_types)
+        self.assertEqual(len(received_types), 2)

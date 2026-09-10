@@ -31,8 +31,8 @@ Usage (one call, in a test module owned by the skill)
         globals(),
         skill_id="ovos-skill-personal.openvoiceos",
         handlers={
-            "WhoAreYou.intent": "PersonalSkill.handle_who_are_you_intent",
-            "WhatAreYou.intent": "PersonalSkill.handle_what_are_you_intent",
+            "WhoAreYou": "PersonalSkill.handle_who_are_you_intent",
+            "WhatAreYou": "PersonalSkill.handle_what_are_you_intent",
             # ...
         },
         cases_dir=Path(__file__).parent / "cases",
@@ -50,6 +50,7 @@ you only want a subset, or to test against custom pipeline stages.
 """
 from __future__ import annotations
 
+import atexit
 import dataclasses
 import time
 from copy import deepcopy
@@ -106,6 +107,17 @@ class IntentCase:
 # ---------------------------------------------------------------------------
 # Case-file discovery
 # ---------------------------------------------------------------------------
+def canonical_intent(name):
+    """Fold the legacy ``<file>.intent`` id onto the OVOS-INTENT-4 canonical
+    suffixless id. Matcher plugins (ovos-padatious >= 2.0) dealias at
+    registration, so engine matches carry the suffixless name; case files keep
+    the ``<Intent>.intent.test`` naming, and suffixed entries in
+    ``known_intents``/``handlers`` are accepted and folded the same way."""
+    if name and name.endswith(".intent"):
+        return name[:-len(".intent")]
+    return name
+
+
 def _read_lines(path: Path) -> List[str]:
     out: List[str] = []
     for raw in path.read_text(encoding="utf-8").splitlines():
@@ -133,7 +145,8 @@ def load_intent_cases(cases_dir: Union[str, Path],
     base = Path(cases_dir)
     if not base.is_dir():
         return []
-    known = set(known_intents) if known_intents is not None else None
+    known = ({canonical_intent(i) for i in known_intents}
+             if known_intents is not None else None)
     cases: List[IntentCase] = []
     for lang_dir in sorted(base.iterdir()):
         if not lang_dir.is_dir() or lang_dir.name.startswith("_"):
@@ -143,7 +156,8 @@ def load_intent_cases(cases_dir: Union[str, Path],
             if case_file.name == "no_match.test":
                 expected: Optional[str] = None
             elif case_file.stem.endswith(".intent"):
-                expected = case_file.stem  # "<IntentName>.intent"
+                # engine matches are suffixless (OVOS-INTENT-4 canonical id)
+                expected = canonical_intent(case_file.stem)
                 if known is not None and expected not in known:
                     raise AssertionError(
                         f"{case_file} targets unknown intent "
@@ -214,6 +228,7 @@ def assert_intent_case(minicroft, skill_id: str, handlers: Dict[str, str],
             test_msg_context=False,
         )
     else:
+        handlers = {canonical_intent(k): v for k, v in handlers.items()}
         if case.intent not in handlers:
             raise AssertionError(
                 f"No handler mapping for intent {case.intent!r} "
@@ -282,9 +297,11 @@ def _wait_for_m2v_sync(mc, max_wait: float = 15.0,
         seen["count"] += 1
         seen["last_t"] = time.monotonic()
 
-    mc.bus.ee.on("padatious:register_intent",
-                 lambda _: on_register(None))
-    mc.bus.ee.on("register_intent", lambda _: on_register(None))
+    def on_padatious(_):
+        on_register(None)
+
+    def on_adapt(_):
+        on_register(None)
 
     # Wildcard "message" listener catches the serialized form on FakeBus.
     def on_any(serialized):
@@ -297,20 +314,56 @@ def _wait_for_m2v_sync(mc, max_wait: float = 15.0,
         if t == "padatious:register_intent" or t == "register_intent":
             on_register(None)
 
+    mc.bus.ee.on("padatious:register_intent", on_padatious)
+    mc.bus.ee.on("register_intent", on_adapt)
     mc.bus.ee.on("message", on_any)
 
     t0 = time.monotonic()
-    mc.bus.emit(Message("mycroft.ready", {}, {}))
+    try:
+        mc.bus.emit(Message("mycroft.ready", {}, {}))
 
-    # Wait for the burst of register events to settle.
-    while time.monotonic() - t0 < max_wait:
-        time.sleep(0.1)
-        if seen["count"] > 0 and (time.monotonic() - seen["last_t"]) > quiet_window:
-            break
-    # m2v's handle_sync_intents does an internal time.sleep(3) before the
-    # actual intent set update. Pad for that ceiling.
-    time.sleep(3.5)
-    return time.monotonic() - t0
+        # Wait for the burst of register events to settle.
+        while time.monotonic() - t0 < max_wait:
+            time.sleep(0.1)
+            if seen["count"] > 0 and (time.monotonic() - seen["last_t"]) > quiet_window:
+                break
+        if seen["count"] > 0:
+            # Register events arrived AND went quiet — the sync is observably
+            # finished, so there is nothing left to wait for.
+            return time.monotonic() - t0
+        # Nothing was observed. We cannot tell whether m2v is mid-sync, so pad
+        # for the ceiling of its internal time.sleep(3) in handle_sync_intents.
+        time.sleep(3.5)
+        return time.monotonic() - t0
+    finally:
+        # Always detach: these listeners live on the shared MiniCroft bus and
+        # would keep counting for the rest of the process.
+        for topic, handler in (("padatious:register_intent", on_padatious),
+                               ("register_intent", on_adapt),
+                               ("message", on_any)):
+            try:
+                mc.bus.ee.remove_listener(topic, handler)
+            except Exception:
+                pass
+
+
+def stop_shared_minicrofts() -> None:
+    """Stop every cached shared MiniCroft and empty the cache.
+
+    Registered with :mod:`atexit`; also safe to call from a session-scoped
+    fixture. A MiniCroft that is never stopped keeps its patches on the
+    process-wide ``SessionManager`` and ``Configuration``.
+    """
+    cache = globals().get(_SHARED_MINICROFT_KEY) or {}
+    for mc in list(cache.values()):
+        try:
+            mc.stop()
+        except Exception:
+            pass
+    cache.clear()
+
+
+atexit.register(stop_shared_minicrofts)
 
 
 def _shared_minicroft(skill_id: str, langs: List[str], m2v_warmup: float):
@@ -319,10 +372,22 @@ def _shared_minicroft(skill_id: str, langs: List[str], m2v_warmup: float):
     Caches the instance on a process-global so every generated class
     shares the same boot. ``m2v_warmup`` is now an *upper bound*: if the
     deterministic event-based wait finishes faster, we return early.
+
+    At most ONE instance stays alive: MiniCroft patches process-wide globals,
+    so a second live instance would clobber the first. Requesting a different
+    key stops the cached instance before booting the new one.
     """
     cache = globals().setdefault(_SHARED_MINICROFT_KEY, {})
     key = (skill_id, tuple(langs))
     if key not in cache:
+        # Keep at most one live MiniCroft — two of them fight over the same
+        # SessionManager / Configuration globals.
+        for stale_key in [k for k in cache if k != key]:
+            stale = cache.pop(stale_key)
+            try:
+                stale.stop()
+            except Exception:
+                pass
         LOG.set_level("CRITICAL")
         secondary = [l for l in langs if l != "en-US"]
         mc = get_minicroft([skill_id], secondary_langs=secondary or None)

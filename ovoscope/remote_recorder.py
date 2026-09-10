@@ -100,6 +100,13 @@ class RemoteRecorder:
         deadline = time.monotonic() + 10.0
         while not self._client.connected_event.is_set():
             if time.monotonic() > deadline:
+                # Close the client before giving up — MessageBusClient keeps a
+                # reconnect thread alive forever otherwise.
+                client, self._client = self._client, None
+                try:
+                    client.close()
+                except Exception:
+                    pass
                 raise ConnectionError(f"Could not connect to {self.bus_url} within 10 seconds.")
             time.sleep(0.1)
 

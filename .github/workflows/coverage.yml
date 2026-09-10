@@ -13,5 +13,5 @@ jobs:
       python_version: '3.11'
       coverage_source: 'ovoscope'
       test_path: 'test/unittests/'
-      test_extras: 'audio,pydantic,media,listener'
+      test_extras: 'test'
       min_coverage: 0

@@ -1,10 +1,10 @@
 # OvoScope + ovos-pydantic-models Integration
-OvoScope currently operates on untyped `ovos_bus_client.message.Message` objects — dicts with string keys. `ovos-pydantic-models` provides typed Pydantic v2 models for every OVOS message type. This document describes how they can be used together and what a deeper integration could look like.
+OvoScope currently operates on untyped `ovos_bus_client.message.Message` objects: dicts with string keys. `ovos-pydantic-models` provides typed Pydantic v2 models for every OVOS message type. This document describes how they can be used together and what a deeper integration could look like.
 ---
 ## The Problem Today
 Writing test fixtures by hand is verbose and error-prone:
 ```python
-# untyped — no validation, any typo silently passes
+# untyped: no validation, any typo silently passes
 expected = Message("recognizer_loop:utterance", {"utterances": ["hello"], "lang": "en-us"}, {})
 ```
 `Message` is a raw dict wrapper. There is no validation of field names, no type checking, and no autocomplete. A typo in a field name (`"utterance"` instead of `"utterances"`) silently produces a wrong test.
@@ -39,7 +39,7 @@ from ovoscope import End2EndTest
 from ovos_bus_client.message import Message
 from ovos_bus_client.session import Session
 from ovos_pydantic_models import RecognizerLoopUtteranceMessage, RecognizerLoopUtteranceData
-# typed construction — validated at instantiation
+# typed construction: validated at instantiation
 utterance_model = RecognizerLoopUtteranceMessage(
     data=RecognizerLoopUtteranceData(utterances=["what is the weather?"], lang="en-us"),
 )
@@ -75,7 +75,7 @@ End2EndTest(
     expected_messages=expected,
 ).execute()
 ```
-Because `End2EndTest` checks only the data keys you specify (subset match), you can omit optional fields in expected messages — this works the same as before, but field names are now validated at Python parse time.
+Because `End2EndTest` checks only the data keys you specify (subset match), you can omit optional fields in expected messages: this works the same as before, but field names are now validated at Python parse time.
 ---
 ## Usage Pattern 3: Typed Assertions on Received Messages
 After a test captures messages, convert received `Message` objects to their typed counterparts for richer assertions:
@@ -94,7 +94,7 @@ typed_speak = from_bus_message(speak_msgs[0], SpeakMessage)
 assert "london" in typed_speak.data.utterance.lower()
 assert typed_speak.data.expect_response is False
 ```
-This is cleaner than `msg.data["utterance"]` — you get IDE autocomplete and the field contract is explicit.
+This is cleaner than `msg.data["utterance"]`: you get IDE autocomplete and the field contract is explicit.
 ---
 ## Usage Pattern 4: Type-safe Test Helpers
 Build helpers that combine the two:
@@ -117,7 +117,7 @@ def make_utterance(text: str, lang: str = "en-us", session: Session | None = Non
 ```
 ---
 ## Deeper Integration: What OvoScope Could Gain
-The patterns above work today with no changes to OvoScope. A deeper integration would add native support for pydantic models as a first-class alternative to `Message`:
+The patterns above work today with no changes to OvoScope. A deeper integration would add native support for pydantic models as an alternative to `Message`:
 ### Idea 1: Accept pydantic models directly in `End2EndTest`
 ```python
 # instead of requiring to_bus_message() manually:
@@ -161,7 +161,7 @@ Install with:
 pip install ovoscope[pydantic]
 ```
 The bridge functions (`to_bus_message`, `from_bus_message`, `validate_fixture`) live in
-`ovoscope.pydantic_helpers` and guard their imports conditionally — the module can be imported
+`ovoscope.pydantic_helpers` and guard their imports conditionally: the module can be imported
 without `ovos-pydantic-models` installed, but calling any function raises a clear `ImportError`
 pointing to the extras install command:
 ```python
@@ -172,10 +172,13 @@ from ovoscope.pydantic_helpers import to_bus_message  # ImportError only on call
 ## Summary
 | Pattern | What you get | Status |
 |---|---|---|
-| Typed source messages via `to_bus_message()` | Validation at construction | ✅ `ovoscope.pydantic_helpers` |
-| Typed expected messages via `to_bus_message()` | Field name validation | ✅ `ovoscope.pydantic_helpers` |
-| Typed assertions via `from_bus_message()` | IDE autocomplete, field contracts | ✅ `ovoscope.pydantic_helpers` |
-| Fixture validation via `validate_fixture()` | Clear errors on malformed JSON | ✅ `ovoscope.pydantic_helpers` |
-| Native pydantic in `End2EndTest` | Seamless API (no `to_bus_message` call) | 💡 Future: `__post_init__` auto-conversion |
-| Schema validation in assertions | Catch malformed skill messages | 💡 Future: `validate_schemas=True` flag |
+| Typed source messages via `to_bus_message()` | Validation at construction | Done, in `ovoscope.pydantic_helpers` |
+| Typed expected messages via `to_bus_message()` | Field name validation | Done, in `ovoscope.pydantic_helpers` |
+| Typed assertions via `from_bus_message()` | IDE autocomplete, field contracts | Done, in `ovoscope.pydantic_helpers` |
+| Fixture validation via `validate_fixture()` | Clear errors on malformed JSON | Done, in `ovoscope.pydantic_helpers` |
+| Native pydantic in `End2EndTest` | Direct API, no `to_bus_message` call | Future: `__post_init__` auto-conversion |
+| Schema validation in assertions | Catch malformed skill messages | Future: `validate_schemas=True` flag |
 Install the extras to use the implemented patterns: `pip install ovoscope[pydantic]`
+
+---
+[← Pipeline](pipeline.md) · [Home](../README.md) · [Audio Testing →](audio-testing.md)

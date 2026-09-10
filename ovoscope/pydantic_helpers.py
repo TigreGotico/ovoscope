@@ -85,7 +85,11 @@ def to_bus_message(pydantic_msg: "OpenVoiceOSMessage") -> Message:
         from ovos_pydantic_models import SpeakMessage, SpeakData
 
         bus_msg = to_bus_message(SpeakMessage(data=SpeakData(utterance="Hello!")))
-        assert bus_msg.msg_type == "speak"
+        # Accepts both the legacy "speak" and canonical "ovos.utterance.speak"
+        # spellings (producers emit canonical since workshop#425; captured
+        # streams from pre-spec producer vintages can still carry the legacy
+        # name).
+        assert bus_msg.msg_type in {"speak", "ovos.utterance.speak"}
         assert bus_msg.data["utterance"] == "Hello!"
     """
     _require_pydantic()
@@ -179,6 +183,10 @@ def validate_fixture(path: Union[str, Path]) -> "SerializedTest":
 
     for section in ("source_message", "expected_messages"):
         msgs = data.get(section, [])  # type: ignore[union-attr]
+        if isinstance(msgs, dict):
+            # legacy fixtures stored a single message object here; the
+            # current schema (End2EndTest.serialize) always writes a list
+            msgs = [msgs]
         for i, raw in enumerate(msgs):
             # Fixtures use the Message.serialize() "type" key; pydantic models
             # expect "message_type".  Accept either form.  Use None (not "")

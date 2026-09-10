@@ -1,13 +1,13 @@
 # CaptureSession
 `CaptureSession` subscribes to all messages on the `FakeBus` and records them during a single test interaction. It handles synchronous responses (ordered, from the intent pipeline) and asynchronous responses (from external threads, unordered).
-## Class: `CaptureSession` — `ovoscope/__init__.py:488`
+## Class: `CaptureSession` (`ovoscope/__init__.py`)
 ```python
 from ovoscope import CaptureSession
 ```
 A `dataclass` that wraps a `MiniCroft` and manages message collection for one test interaction.
-`CaptureSession.finish` — `ovoscope/__init__.py:521`
+`CaptureSession.finish` (`ovoscope/__init__.py`)
 
-> **Idempotency:** `finish()` may be called multiple times safely — subsequent calls
+> **Idempotency:** `finish()` may be called multiple times safely: subsequent calls
 > return the same message list without re-subscribing or clearing state.
 ### Fields
 | Field | Type | Default | Description |
@@ -16,9 +16,10 @@ A `dataclass` that wraps a `MiniCroft` and manages message collection for one te
 | `responses` | `list[Message]` | `[]` | Ordered synchronous messages captured |
 | `async_responses` | `list[Message]` | `[]` | Async messages (arrive from external threads, unordered) |
 | `eof_msgs` | `list[str]` | `["ovos.utterance.handled"]` | Message types that signal end of interaction |
-| `ignore_messages` | `list[str]` | `["ovos.skills.settings_changed"]` | Message types to discard |
+| `terminal_signals` | `bool` | `True` | Also end capture on the pipeline's own terminal markers (see below) |
+| `ignore_messages` | `list[str]` | `DEFAULT_IGNORED` | Message types to discard |
 | `async_messages` | `list[str]` | `[]` | Message types to route to `async_responses` instead |
-| `done` | `threading.Event` | — | Set when an EOF message is received |
+| `done` | `threading.Event` |: | Set when an EOF message is received |
 ### Methods
 #### `capture(source_message, timeout=20)`
 Emits `source_message` on the bus and waits for an EOF message (or timeout). Subsequent calls on the same session accumulate into `responses`.
@@ -39,10 +40,38 @@ incoming message
         └─ otherwise                   → responses (ordered)
 eof_msgs trigger done.set() → capture.wait() returns
 ```
+### Terminal signals
+An utterance's lifecycle is over the instant this lands on the bus, whether
+it was matched or not:
+```python
+TERMINAL_SIGNALS = ["ovos.utterance.handled"]
+```
+`ovos.utterance.handled` fires exactly once per utterance, always last —
+after any matched, unmatched, or fallback handling — which is what makes it
+safe to use as an early-exit signal without dropping messages that follow
+it. By default (`terminal_signals=True`) `capture()` merges this into
+whatever `eof_msgs` was given, so a caller who narrows `eof_msgs` down to a
+topic that only a *matched* utterance reaches (e.g. to dodge a
+`get_response()` deadlock on a specific skill handler) still gets a prompt
+return for an unmatched or misrouted utterance instead of paying the full
+`timeout` on every such row. Set `terminal_signals=False` to opt back into
+the exact `eof_msgs`-only behaviour. The merge is skipped whenever
+`eof_count > 1`: that knob counts occurrences of one topic across several
+concurrent lifecycles, and letting the terminal signal count toward it would
+end capture after only one lifecycle finished instead of all of them.
+
 ### Default ignored messages
 ```python
-DEFAULT_IGNORED = ["ovos.skills.settings_changed"]
+DEFAULT_IGNORED = ["ovos.skills.settings_changed"] + TRAINING_NOISE
 ```
+`TRAINING_NOISE` (`["mycroft.skills.trained"]`) is MiniCroft's own
+boot/training orchestration noise, not something any scenario's message
+sequence should assert on: a pipeline plugin can legitimately re-emit it
+mid-capture (e.g. a `secondary_langs` re-training pass), and it is filtered
+out before any exact sequence comparison runs. This is deliberately narrow —
+only genuine orchestration noise goes in `TRAINING_NOISE`, never a general
+subsequence-matching mode. Comparisons stay exact on everything else, so a
+message that is missing or duplicated for real still fails the test.
 ### Default GUI ignored (when `ignore_gui=True` on `End2EndTest`)
 ```python
 GUI_IGNORED = [
@@ -86,3 +115,6 @@ capture.capture(follow_up, timeout=10)
 all_messages = capture.finish()
 ```
 `End2EndTest` does this automatically when `source_message` is a list.
+
+---
+[← MiniCroft](minicroft.md) · [Home](../README.md) · [End2EndTest →](end2end-test.md)

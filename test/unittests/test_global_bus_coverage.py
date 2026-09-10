@@ -60,19 +60,26 @@ class TestGlobalBusCoverage:
         assert ovoscope.GLOBAL_BUS_COVERAGE_COLLECTOR.invocations["global.emit"] == 1
 
     def test_tracker_snapshots_global_state(self):
-        """BusCoverageTracker should snapshot global state at __init__."""
+        """BusCoverageTracker snapshots the collector as a BASELINE at __init__.
+
+        Invocations that happened before the tracker existed belong to earlier
+        tests and must be subtracted, not inherited.
+        """
         ovoscope.GLOBAL_BUS_COVERAGE = True
         ovoscope.GLOBAL_BUS_COVERAGE_COLLECTOR = ovoscope.GlobalBusCoverageCollector()
         ovoscope.GLOBAL_BUS_COVERAGE_COLLECTOR.record_invocation("boot.event")
         ovoscope.GLOBAL_BUS_COVERAGE_COLLECTOR.record_registration("boot.handler")
-        
+
         bus = FakeBus()
         minicroft = MagicMock()
         minicroft.plugin_skills = {}
-        
+
         tracker = BusCoverageTracker(bus, minicroft)
-        
-        assert tracker._global_invocations["boot.event"] == 1
+
+        # baseline holds the earlier count …
+        assert tracker._collector_baseline["boot.event"] == 1
+        # … and the delta over that baseline is zero.
+        assert tracker._collector_delta() == {}
         assert tracker._global_registrations["boot.handler"] == 1
 
     def test_tracker_merges_global_registrations(self):
@@ -92,27 +99,28 @@ class TestGlobalBusCoverage:
         assert "boot.unclaimed" in tracker._registered["__core__"]
 
     def test_tracker_merges_global_invocations(self):
-        """build_report should sum global and local invocations."""
+        """build_report sums THIS test's boot delta and its local invocations."""
         ovoscope.GLOBAL_BUS_COVERAGE = True
         ovoscope.GLOBAL_BUS_COVERAGE_COLLECTOR = ovoscope.GlobalBusCoverageCollector()
-        ovoscope.GLOBAL_BUS_COVERAGE_COLLECTOR.record_invocation("shared.event") # 1x during boot
-        
+
         bus = FakeBus()
         minicroft = MagicMock()
         minicroft.plugin_skills = {}
-        
+
         tracker = BusCoverageTracker(bus, minicroft)
+        # boot happens AFTER the tracker exists, so it belongs to this test
+        ovoscope.GLOBAL_BUS_COVERAGE_COLLECTOR.record_invocation("shared.event")
         tracker.start_tracking()
-        bus.emit(Message("shared.event")) # 1x during test
+        bus.emit(Message("shared.event"))  # 1x during test
         tracker.stop_tracking()
-        
+
         # Manually register the listener so it shows up in report
         tracker._registered = {"__core__": {"shared.event": 1}}
-        
+
         report = tracker.build_report()
         skill = next(s for s in report.skills if s.skill_id == "__core__")
         handler = next(h for h in skill.listeners if h.msg_type == "shared.event")
-        
-        # 1 (boot) + 1 (test) = 2
+
+        # 1 (this test's boot) + 1 (test) = 2
         assert handler.invocation_count == 2
         assert handler.covered is True

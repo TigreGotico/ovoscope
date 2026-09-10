@@ -16,10 +16,10 @@ classes provided in `ovoscope.audio`.
 
 ### AudioServiceHarness
 
-`AudioServiceHarness` — `ovoscope/audio.py`
+`AudioServiceHarness` (`ovoscope/audio.py`)
 
-Wraps `AudioService` (from `ovos_audio.audio`) with a `MockAudioBackend` on a
-`FakeBus`. Use it when your test exercises the audio routing layer — backend
+`AudioServiceHarness` wraps `AudioService` (from `ovos_audio.audio`) with a `MockAudioBackend` on a
+`FakeBus`. Use it when your test exercises the audio routing layer: backend
 selection by URI scheme, volume ducking on speech events, the 1-second stop
 guard, or session-source validation.
 
@@ -37,9 +37,9 @@ with AudioServiceHarness() as h:
 
 ### PlaybackServiceHarness
 
-`PlaybackServiceHarness` — `ovoscope/audio.py`
+`PlaybackServiceHarness` (`ovoscope/audio.py`)
 
-Wraps `PlaybackService` (from `ovos_audio.service`) with a `MockTTS` on a
+`PlaybackServiceHarness` wraps `PlaybackService` (from `ovos_audio.service`) with a `MockTTS` on a
 `FakeBus`. Use it when testing TTS execution flow: `speak` messages, the
 `recognizer_loop:audio_output_start/end` lifecycle, and optional mic-listen
 triggers after speech.
@@ -55,11 +55,11 @@ with PlaybackServiceHarness() as h:
 
 ## Stop Guard Pitfall
 
-`AudioService._stop()` — `ovos-audio/ovos_audio/audio.py` — checks
+`AudioService._stop()` (`ovos-audio/ovos_audio/audio.py`) checks
 `time.monotonic() - self.play_start_time > 1`. If stop is called within 1
 second of `play()`, the stop command is silently ignored.
 
-**Tests that call `stop()` must sleep at least 1.1 seconds after `play()`:**
+Tests that call `stop()` must sleep at least 1.1 seconds after `play()`:
 
 ```python
 import time
@@ -74,7 +74,7 @@ with AudioServiceHarness() as h:
 
 ## play_audio Patch Rationale
 
-`PlaybackThread._play()` — `ovos-audio/ovos_audio/playback.py` — calls
+`PlaybackThread._play()` (`ovos-audio/ovos_audio/playback.py`) calls
 `play_audio(data)` then waits on the returned process object. Without patching,
 this would invoke a real audio player binary (sox, aplay, paplay, mpg123).
 
@@ -111,13 +111,13 @@ with AudioServiceHarness() as h:
 ```
 
 `AudioServiceHarness.get_track_info()` and `list_backends()` already implement
-this pattern internally — `ovoscope/audio.py`.
+this pattern internally, in `ovoscope/audio.py`.
 
 ## API Reference
 
 ### MockAudioBackend
 
-`MockAudioBackend` — `ovoscope/audio.py`
+`MockAudioBackend` (`ovoscope/audio.py`)
 
 | Attribute / Method | Type | Description |
 |---|---|---|
@@ -132,7 +132,7 @@ this pattern internally — `ovoscope/audio.py`.
 
 ### AudioServiceHarness
 
-`AudioServiceHarness` — `ovoscope/audio.py`
+`AudioServiceHarness` (`ovoscope/audio.py`)
 
 | Method | Description |
 |---|---|
@@ -151,7 +151,7 @@ this pattern internally — `ovoscope/audio.py`.
 
 ### MockTTS
 
-`MockTTS` — `ovoscope/audio.py`
+`MockTTS` (`ovoscope/audio.py`)
 
 | Attribute / Method | Description |
 |---|---|
@@ -162,7 +162,7 @@ this pattern internally — `ovoscope/audio.py`.
 
 ### PlaybackServiceHarness
 
-`PlaybackServiceHarness` — `ovoscope/audio.py`
+`PlaybackServiceHarness` (`ovoscope/audio.py`)
 
 | Method | Description |
 |---|---|
@@ -175,7 +175,7 @@ this pattern internally — `ovoscope/audio.py`.
 
 ### AudioCaptureSession
 
-`AudioCaptureSession` — `ovoscope/audio.py`
+`AudioCaptureSession` (`ovoscope/audio.py`)
 
 | Method / Property | Description |
 |---|---|
@@ -190,9 +190,12 @@ Default `track_prefixes` captures: `"mycroft.audio."`,
 
 ## Cross-References
 
-- `AudioService` — `ovos-audio/ovos_audio/audio.py`
-- `PlaybackService` — `ovos-audio/ovos_audio/service.py`
-- `PlaybackThread` — `ovos-audio/ovos_audio/playback.py`
-- `AudioBackend` (base class) — `ovos_plugin_manager.templates.audio.AudioBackend`
-- `TTS` (base class) — `ovos_plugin_manager.templates.tts.TTS`
-- End-to-end tests — `ovos-audio/test/end2end/`
+- `AudioService` (`ovos-audio/ovos_audio/audio.py`)
+- `PlaybackService` (`ovos-audio/ovos_audio/service.py`)
+- `PlaybackThread` (`ovos-audio/ovos_audio/playback.py`)
+- `AudioBackend`, the base class (`ovos_plugin_manager.templates.audio.AudioBackend`)
+- `TTS`, the base class (`ovos_plugin_manager.templates.tts.TTS`)
+- End-to-end tests: `ovos-audio/test/end2end/`
+
+---
+[← Pydantic Integration](pydantic-integration.md) · [Home](../README.md) · [Media Testing →](media-testing.md)

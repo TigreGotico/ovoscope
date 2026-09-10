@@ -1,11 +1,11 @@
 # End2EndTest
 `End2EndTest` is the primary API. It wires together `MiniCroft`, `CaptureSession`, and all assertion logic into a single declarative test object.
-## Class: `End2EndTest` — `ovoscope/__init__.py:533`
+## Class: `End2EndTest`: `ovoscope/__init__.py`
 ```python
 from ovoscope import End2EndTest
 ```
 A `dataclass`. Configure once, call `.execute()` to run.
-`End2EndTest.execute` — `ovoscope/__init__.py:602`
+`End2EndTest.execute`: `ovoscope/__init__.py`
 ---
 ## Fields
 ### Core
@@ -59,7 +59,7 @@ All default to `True`. Set to `False` to skip individual assertion categories:
 ---
 ## `execute(timeout=30)`
 Runs the test. Raises `AssertionError` on the first failing assertion.
-If `minicroft` is `None`, creates one automatically (managed mode — stops it after the test). To run multiple tests against the same loaded skills, pass your own `MiniCroft`:
+If `minicroft` is `None`, creates one automatically (managed mode: stops it after the test). To run multiple tests against the same loaded skills, pass your own `MiniCroft`:
 ```python
 from ovoscope import get_minicroft, End2EndTest
 croft = get_minicroft(["skill-weather.openvoiceos"])
@@ -82,19 +82,19 @@ For each `(expected, received)` pair:
 ```python
 assert expected.msg_type == received.msg_type
 ```
-**Data check** — subset match (expected keys must be present with matching values):
+**Data check**: subset match (expected keys must be present with matching values):
 ```python
 for k, v in expected.data.items():
     assert received.data[k] == v
 ```
-**Context check** — same subset pattern:
+**Context check**: same subset pattern:
 ```python
 for k, v in expected.context.items():
     assert received.context[k] == v
 ```
-**Routing check** — tracks rolling expected source/destination:
+**Routing check**: tracks rolling expected source/destination:
 - Starts from `source_message[0].context["source"]` and `["destination"]`
-- On `entry_points` message: flips (`e_src, e_dst = r_dst, r_src`) — the reply comes back the other way
+- On `entry_points` message: flips (`e_src, e_dst = r_dst, r_src`): the reply comes back the other way
 - On `flip_points` message: updates expected from received, then swaps
 - `keep_original_src` always uses the original, regardless of flips
 ### Active skill tracking
@@ -186,3 +186,6 @@ try:
 finally:
     croft.stop()
 ```
+
+---
+[← Capture Session](capture-session.md) · [Home](../README.md) · [Pipeline →](pipeline.md)

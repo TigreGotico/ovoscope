@@ -29,6 +29,7 @@ from ovos_bus_client.message import Message
 from ovos_spec_tools import SpecMessage
 
 from ovoscope.voice_loop import (
+    ListenerHarness,
     MiniHotwordContainer,
     MiniVoiceLoop,
     MockHotWordEngine,
@@ -371,6 +372,46 @@ class TestMiniVoiceLoopNamespaceBridging(unittest.TestCase):
             self.assertTrue(legacy_hits, "legacy record_begin should still fire")
             self.assertEqual(spec_hits, [],
                              "spec topic must not fire with bridging off")
+
+
+class TestAssertionHelpersAcceptCanonicalTopics(unittest.TestCase):
+    """The assert_*_emitted/suppressed helpers filter a catch-all-captured
+    stream (same defect class as ovoscope.assert_spoke) — they must accept
+    canonical spec topics, not just the legacy recognizer_loop:* spellings.
+    """
+
+    def test_assert_record_begin_emitted_accepts_canonical_only_stream(self):
+        harness = ListenerHarness()
+        captured = [Message("ovos.listener.record.started")]
+        harness.assert_record_begin_emitted(captured)  # must not raise
+
+    def test_assert_wakeword_detected_accepts_canonical_only_stream(self):
+        harness = ListenerHarness()
+        captured = [
+            Message("recognizer_loop:wakeword"),  # not migrated — legacy only
+            Message("ovos.listener.record.started"),
+        ]
+        harness.assert_wakeword_detected(captured)  # must not raise
+
+    def test_assert_utterance_emitted_accepts_canonical_only_stream(self):
+        harness = ListenerHarness()
+        captured = [Message("ovos.utterance.handle", {"utterances": ["hi"]})]
+        harness.assert_utterance_emitted("hi", captured)  # must not raise
+
+    def test_assert_wakeword_suppressed_still_fails_on_canonical_record_begin(self):
+        """Regression for the negative-assertion false-GREEN: a canonical-only
+        captured stream that DOES contain a record-begin must still fail
+        assert_wakeword_suppressed, not silently pass because the helper only
+        recognised the legacy spelling.
+        """
+        harness = ListenerHarness()
+        captured = [Message("ovos.listener.record.started")]
+        with self.assertRaises(AssertionError):
+            harness.assert_wakeword_suppressed(captured)
+
+    def test_assert_wakeword_suppressed_passes_on_truly_empty_stream(self):
+        harness = ListenerHarness()
+        harness.assert_wakeword_suppressed([])  # must not raise
 
 
 if __name__ == "__main__":
