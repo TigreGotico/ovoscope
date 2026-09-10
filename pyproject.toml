@@ -13,15 +13,14 @@ authors = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    # Alpha pin: 2.0.4 stable not yet released; 2.0.4a2 is the minimum that
+    # Alpha pin: 2.0.4 stable not yet released; 2.6.2a1 is the minimum that
     # includes the FakeBus-compatible SkillManager changes ovoscope depends on.
-    # [lgpl,plugins] extras: bare ovos-core ships no pipeline matchers at
-    # all. Adapt and Padacioso live in [plugins]; Padatious lives in [lgpl]
-    # (LGPL-licensed, kept out of [plugins] on purpose) — true for the pinned
-    # 2.0.4a2 floor per its PyPI metadata, same split the installer itself
-    # uses ([lgpl,plugins]). [plugins] alone leaves Padatious missing and
-    # every Padatious-registered intent silently unmatched.
-    "ovos-core[lgpl,plugins]>=2.0.4a2",
+    # [plugins] extra: bare ovos-core ships no pipeline matchers at all.
+    # Padatious, Adapt and Padacioso all live in [plugins] from 2.6.2a1
+    # onward, per PyPI metadata, which is why the floor sits there — an
+    # earlier floor can resolve to a release where Padatious is in neither
+    # extra, leaving every Padatious-registered intent silently unmatched.
+    "ovos-core[plugins]>=2.6.2a1",
     # The audio harness emits/observes the ovos.* spec topics while ovos-audio
     # still produces the legacy topics. >=0.12.0a1 is the first FakeBus that
     # mirrors MessageBusClient's legacy<->ovos.* namespace migration (ovos-utils
