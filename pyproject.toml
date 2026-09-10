@@ -13,15 +13,11 @@ authors = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    # Alpha pin: 2.0.4 stable not yet released; 2.0.4a2 is the minimum that
-    # includes the FakeBus-compatible SkillManager changes ovoscope depends on.
-    # [lgpl,plugins] extras: bare ovos-core ships no pipeline matchers at
-    # all. Adapt and Padacioso live in [plugins]; Padatious lives in [lgpl]
-    # (LGPL-licensed, kept out of [plugins] on purpose) — true for the pinned
-    # 2.0.4a2 floor per its PyPI metadata, same split the installer itself
-    # uses ([lgpl,plugins]). [plugins] alone leaves Padatious missing and
-    # every Padatious-registered intent silently unmatched.
-    "ovos-core[lgpl,plugins]>=2.0.4a2",
+    # Alpha pin: ovos-core 3.0.1a1 is the first release carrying Padatious in
+    # the [plugins] extra (padatious dropped its libfann dependency and is now
+    # pure Apache). Bare ovos-core ships no pipeline matchers at all;
+    # [plugins] covers Adapt, Padatious, and Padacioso.
+    "ovos-core[plugins]>=3.0.1a1",
     # The audio harness emits/observes the ovos.* spec topics while ovos-audio
     # still produces the legacy topics. >=0.12.0a1 is the first FakeBus that
     # mirrors MessageBusClient's legacy<->ovos.* namespace migration (ovos-utils
@@ -77,7 +73,7 @@ bench = ["numpy"]
 # Multi-engine golden-utterance runner (ovoscope.golden): template engines
 # plus the Model2Vec zero-shot prototype pipeline, scored standalone against
 # a skill's own resource files (no bus/MiniCroft boot required). Padatious
-# and padacioso already ship with ovos-core[lgpl,plugins]; nebulento and
+# and padacioso already ship with ovos-core[plugins]; nebulento and
 # ovos-m2v-pipeline do not, so they are listed explicitly here.
 engines = [
     "nebulento",

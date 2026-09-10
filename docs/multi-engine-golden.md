@@ -151,7 +151,7 @@ not in what `write_predictions` writes.
 
 ## Extras
 
-Padatious and padacioso ship with `ovos-core[lgpl,plugins]`. Nebulento
+Padatious and padacioso ship with `ovos-core[plugins]`. Nebulento
 and `ovos-m2v-pipeline` are separate installs:
 
 ```
