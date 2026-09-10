@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.8.5a1](https://github.com/OpenVoiceOS/ovoscope/tree/1.8.5a1) (2026-09-10)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/1.8.4a1...1.8.5a1)
+
+**Merged pull requests:**
+
+- fix: drop ovos-core\[lgpl\] extra — moved to \[plugins\] in 3.0.1a1 [\#156](https://github.com/OpenVoiceOS/ovoscope/pull/156) ([JarbasAl](https://github.com/JarbasAl))
+
+## [1.8.4a1](https://github.com/OpenVoiceOS/ovoscope/tree/1.8.4a1) (2026-09-09)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/1.8.3a1...1.8.4a1)
+
 ## [1.8.3a1](https://github.com/OpenVoiceOS/ovoscope/tree/1.8.3a1) (2026-09-09)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/1.8.2a1...1.8.3a1)
@@ -366,17 +378,9 @@
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.21.1a1...0.22.0a1)
 
-**Merged pull requests:**
-
-- feat: stream audio frames through MiniListener for multi-frame decoders [\#86](https://github.com/OpenVoiceOS/ovoscope/pull/86) ([JarbasAl](https://github.com/JarbasAl))
-
 ## [0.21.1a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.21.1a1) (2026-06-25)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovoscope/compare/0.21.0a1...0.21.1a1)
-
-**Merged pull requests:**
-
-- fix: repair ovoscope record in-process path \(default\_pipeline kwarg + from\_message skill\_ids\) [\#85](https://github.com/OpenVoiceOS/ovoscope/pull/85) ([JarbasAl](https://github.com/JarbasAl))
 
 ## [0.21.0a1](https://github.com/OpenVoiceOS/ovoscope/tree/0.21.0a1) (2026-06-25)
 
